@@ -2,9 +2,9 @@ import { Suspense } from "react";
 import { createClient, requireUser } from "@/lib/supabase/server";
 
 async function Events() {
-  await requireUser();
+  const user = await requireUser();
   const supabase = await createClient();
-  const { data: events, error } = await supabase.from("events").select("id, title, starts_at").order("starts_at", { ascending: false });
+  const { data: events, error } = await supabase.from("events").select("id, title, starts_at, event_members!inner(user_id)").eq("event_members.user_id", user.id).order("starts_at", { ascending: false });
   if (error) throw error;
   if (!events.length) return <p>Chưa có sự kiện nào.</p>;
   return (
