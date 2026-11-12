@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/health/route";
 
 // connection() only works inside a Next request scope; stub it for a direct handler call.
-import { vi } from "vitest";
 vi.mock("next/server", () => ({ connection: async () => {} }));
 
 describe("GET /api/health", () => {

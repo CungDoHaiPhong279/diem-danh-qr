@@ -13,17 +13,23 @@ describe("scrubToken", () => {
 });
 
 describe("scrubEvent", () => {
-  it("scrubs url, referer, transaction and breadcrumbs", () => {
+  it("scrubs token in every field of the event", () => {
+    const p = `/t/${T}`;
     const e = scrubEvent({
-      request: { url: U, headers: { referer: U, Referer: U, other: "x" } },
-      transaction: `GET /t/${T}`,
-      breadcrumbs: [{ message: U, data: { url: U, from: `/t/${T}`, to: `/t/${T}`, n: 1 } }],
+      request: { url: U, headers: { referer: U, other: "x" } },
+      transaction: `GET ${p}`,
+      contexts: { nextjs: { request_path: p }, trace: { data: { "http.target": p } } },
+      spans: [{ description: `GET ${p}`, data: { "url.full": U } }],
+      exception: { values: [{ value: `bad ${p}` }] },
+      breadcrumbs: [{ message: U, data: { url: U, n: 1 } }],
     });
-    expect(e.request!.url).toBe(S);
-    expect(e.request!.headers).toEqual({ referer: S, Referer: S, other: "x" });
-    expect(e.transaction).toBe("GET /t/[token]");
-    expect(e.breadcrumbs![0].message).toBe(S);
-    expect(e.breadcrumbs![0].data).toEqual({ url: S, from: "/t/[token]", to: "/t/[token]", n: 1 });
+    const s = JSON.stringify(e);
+    expect(s).not.toContain(T);
+    expect(e.contexts.nextjs.request_path).toBe("/t/[token]");
+    expect(e.spans[0].data["url.full"]).toBe(S);
+    expect(e.spans[0].description).toBe("GET /t/[token]");
+    expect(e.exception.values[0].value).toBe("bad /t/[token]");
+    expect(e.request.headers.other).toBe("x");
   });
   it("tolerates an empty event", () => expect(scrubEvent({})).toEqual({}));
 });
