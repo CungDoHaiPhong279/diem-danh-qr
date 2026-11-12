@@ -1,8 +1,14 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import Script from "next/script";
 import { submitRegistration, type RegState } from "./actions";
+
+declare global {
+  interface Window {
+    turnstile?: { reset: () => void };
+  }
+}
 
 const FIELDS = [
   ["name", "Họ và tên", "name"],
@@ -14,6 +20,10 @@ const FIELDS = [
 
 export function RegisterForm({ eventId, consentLabel, siteKey }: { eventId: string; consentLabel: string; siteKey?: string }) {
   const [state, action, pending] = useActionState<RegState, FormData>(submitRegistration.bind(null, eventId), null);
+  // Turnstile tokens are single-use: get a fresh one after every server response.
+  useEffect(() => {
+    if (state) window.turnstile?.reset();
+  }, [state]);
   return (
     <form action={action} className="space-y-3">
       {FIELDS.map(([name, label, auto]) => (
@@ -24,6 +34,9 @@ export function RegisterForm({ eventId, consentLabel, siteKey }: { eventId: stri
             required
             autoComplete={auto}
             type={name === "email" ? "email" : "text"}
+            minLength={name === "name" ? 2 : undefined}
+            pattern={name === "student_id" ? "[A-Za-z0-9 ]{4,40}" : undefined}
+            title={name === "student_id" ? "MSSV gồm 4-20 chữ hoặc số" : undefined}
             defaultValue={state?.values?.[name]}
             className="w-full rounded border p-2"
           />
