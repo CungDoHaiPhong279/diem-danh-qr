@@ -5,14 +5,16 @@ import { revalidatePath } from "next/cache";
 import { createClient, requireUser } from "@/lib/supabase/server";
 import { parseCapacity, parseEventForm } from "@/lib/validation";
 
-export type FormState = { errors?: Record<string, string>; message?: string } | null;
+export type FormState = { errors?: Record<string, string>; message?: string; values?: Record<string, string> } | null;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function createEvent(_prev: FormState, fd: FormData): Promise<FormState> {
   const user = await requireUser();
   const parsed = parseEventForm(fd);
-  if (!parsed.ok) return { errors: parsed.errors };
+  // Echo typed values back so a failed submit does not wipe the form.
+  const values = Object.fromEntries([...fd.entries()].filter(([k, v]) => !k.startsWith("$") && typeof v === "string")) as Record<string, string>;
+  if (!parsed.ok) return { errors: parsed.errors, values };
   const supabase = await createClient();
   // New events are open (default registration_open = true), so events_select lets .select() read the row back.
   const { data, error } = await supabase
@@ -20,7 +22,7 @@ export async function createEvent(_prev: FormState, fd: FormData): Promise<FormS
     .insert({ ...parsed.value, owner_id: user.id })
     .select("id")
     .single();
-  if (error || !data) return { message: "Không tạo được sự kiện, vui lòng thử lại" };
+  if (error || !data) return { message: "Không tạo được sự kiện, vui lòng thử lại", values };
   redirect(`/dashboard/events/${data.id}`);
 }
 
