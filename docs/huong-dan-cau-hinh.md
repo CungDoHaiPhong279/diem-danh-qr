@@ -99,7 +99,17 @@ Repo đang để public, nên cần bật tính năng chặn lộ khóa.
    - anon / publishable key.
    - service_role / secret key. Đây là khóa quan trọng nhất, ai có nó là toàn quyền với database.
 3. Với mỗi project, vào **Authentication → Sign In / Providers → Email** và **tắt** Email. Ứng dụng chỉ dùng Google; để Email bật thì ai cũng tự tạo tài khoản qua API được.
-4. Việc tạo bảng trên cloud (`supabase db push`) Claude sẽ hướng dẫn ở Task 8. Lúc đó bạn cần mật khẩu database của bước 1.
+4. Tạo bảng trên cloud. Chạy trong thư mục `C:\diem-danh-qr`, từng lệnh một. Khi được hỏi, nhập mật khẩu database của bước 1 vào terminal, không dán vào chat:
+   ```bash
+   npx supabase login
+   ```
+   ```bash
+   npx supabase link --project-ref <ref-staging>
+   ```
+   ```bash
+   npx supabase db push
+   ```
+   Lặp lại 2 lệnh cuối với `<ref-prod>`. Đúng khi lệnh `db push` báo đã áp dụng 2 migration (`..._schema.sql`, `..._register.sql`).
 
 Lưu ý: project Free bị **tạm dừng sau 1 tuần không có truy cập**.
 - Bản prod có cron `/api/health` gọi mỗi ngày để giữ project chạy. Claude làm việc này ở Task 8.
