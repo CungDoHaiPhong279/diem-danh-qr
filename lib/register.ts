@@ -17,7 +17,7 @@ export function mapRegisterError(err: { code?: string; message: string }): Regis
 
 export async function registerTicket(
   input: RegistrationInput & { eventId: string },
-): Promise<{ ok: true; token: string } | { ok: false; reason: RegisterFailure }> {
+): Promise<{ ok: true; token: string } | { ok: false; reason: RegisterFailure; code?: string; message?: string }> {
   const { data, error } = await admin.rpc("register", {
     p_event: input.eventId,
     p_name: input.name,
@@ -27,6 +27,6 @@ export async function registerTicket(
     p_faculty: input.faculty,
     p_notice_version: NOTICE_VERSION,
   });
-  if (error) return { ok: false, reason: mapRegisterError(error) };
+  if (error) return { ok: false, reason: mapRegisterError(error), code: error.code, message: error.message };
   return { ok: true, token: data.token };
 }

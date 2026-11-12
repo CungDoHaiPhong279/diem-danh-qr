@@ -29,6 +29,10 @@ export async function submitRegistration(eventId: string, _prev: RegState, fd: F
   if (!parsed.ok) return { values, errors: parsed.errors };
   if (!UUID.test(eventId)) return { values, message: MESSAGES.EVENT_NOT_FOUND };
   const res = await registerTicket({ ...parsed.value, eventId });
-  if (!res.ok) return { values, message: MESSAGES[res.reason] };
+  if (!res.ok) {
+    // Only reason + Postgres code/message: no details/hint (may echo submitted values), no form fields.
+    if (res.reason === "UNKNOWN") console.error("register failed", { reason: res.reason, code: res.code, message: res.message });
+    return { values, message: MESSAGES[res.reason] };
+  }
   redirect(`/t/${res.token}`);
 }

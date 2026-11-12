@@ -55,6 +55,18 @@ describe("parseRegistration", () => {
     expect(r.value.name).toBe("Nguyễn".normalize("NFC"));
     expect(parseRegistration(reg({ name: "A" })).ok).toBe(false);
   });
+  it("requires class and faculty", () => {
+    for (const k of ["class_name", "faculty"]) {
+      const r = parseRegistration(reg({ [k]: " " }));
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors[k]).toBeTruthy();
+    }
+  });
+  it("upper-cases student id", () => {
+    const r = parseRegistration(reg({ student_id: "ab1234" }));
+    if (!r.ok) throw new Error("expected ok");
+    expect(r.value.student_id).toBe("AB1234");
+  });
   it("requires consent", () => {
     const fd = reg();
     fd.delete("consent");
