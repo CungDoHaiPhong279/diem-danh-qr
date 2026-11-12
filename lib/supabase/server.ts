@@ -1,10 +1,13 @@
 import "server-only";
 import { createServerClient } from "@supabase/ssr";
+import { io } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 export async function createClient() {
   const cookieStore = await cookies();
+  // supabase-js reads Date.now() (token expiry); keep it out of the session App Shell prerender.
+  await io();
   return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
       getAll: () => cookieStore.getAll(),
