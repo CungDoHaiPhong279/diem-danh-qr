@@ -58,6 +58,7 @@ Không cần làm: khóa Turnstile cho máy và bản Preview. Claude dùng khó
    - `NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY=` lấy giá trị `ANON_KEY` từ lệnh `npx supabase status -o env`
    - `NEXT_PUBLIC_SITE_URL=http://localhost:3000`
+   - `SUPABASE_SERVICE_ROLE_KEY=` lấy giá trị `SERVICE_ROLE_KEY` từ cùng lệnh trên (cần để form đăng ký lưu được vé)
 2. Chạy `npm run dev`, mở http://localhost:3000/login, bấm nút Google. Đúng khi trang chuyển sang `/dashboard`.
 3. Kiểm tra hồ sơ đã được tạo:
    ```bash
