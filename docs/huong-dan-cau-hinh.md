@@ -164,6 +164,7 @@ Lưu ý: project Free bị **tạm dừng sau 1 tuần không có truy cập**.
 | `TURNSTILE_SECRET_KEY` | Secret key (E2) | `1x0000000000000000000000000000000AA` |
 | `SENTRY_DSN` | DSN (F2) | DSN (F2) |
 | `NEXT_PUBLIC_SENTRY_DSN` | DSN (F2) | DSN (F2) |
+| `CONTACT_EMAIL` | email liên hệ về dữ liệu, hiện trong câu đồng ý và trang /privacy (nên dùng email riêng cho dự án) | như Production |
 
 3. Báo Claude "xong mục G". Claude sẽ hỏi bạn trước khi deploy lần đầu.
 4. Có domain Vercel rồi thì quay lại hoàn thiện mục D2, D4 (prod) và E1.
