@@ -160,25 +160,41 @@ Lưu ý: project Free bị **tạm dừng sau 1 tuần không có truy cập**.
 
 ## G. Vercel
 
-1. Vào https://vercel.com, đăng nhập bằng GitHub, chọn **Add New → Project → Import** repo `diem-danh-qr`. Gói **Hobby**.
-2. **Chưa bấm Deploy.** Mở **Environment Variables**, nhập các biến dưới đây.
-   - Cột Production lấy khóa của project **prod**.
-   - Cột Preview lấy khóa của project **staging**.
+**G1. Import repo**
+1. Vào https://vercel.com, đăng nhập bằng **GitHub**. Nếu được hỏi gói, chọn **Hobby**.
+2. Bấm **Add New… → Project**. Ở danh sách repo, nếu chưa thấy `diem-danh-qr` thì bấm **Adjust GitHub App Permissions** và cho Vercel quyền đọc repo này.
+3. Bấm **Import** cạnh `diem-danh-qr`. Giữ nguyên Framework **Next.js**, Root Directory `./`. **Project Name** để `diem-danh-qr` (domain sẽ là `diem-danh-qr.vercel.app` nếu tên chưa ai dùng).
+4. Bấm **Deploy**. Lần này Vercel build nhánh `main`, nhánh này mới chỉ có file kế hoạch nên **build lỗi là bình thường**. Bấm **Continue to Dashboard**.
+
+**G2. Nhập biến môi trường**
+1. Trong project, vào **Settings → Environment Variables**.
+2. Với mỗi dòng trong bảng: nhập **Key**, **Value**, ở ô **Environments** chỉ tích **Production** (cột Production) rồi bấm **Save**; sau đó thêm lại cùng Key với giá trị cột Preview và chỉ tích **Preview**. Dòng nào hai cột giống nhau thì nhập một lần, tích cả hai.
+3. Bỏ qua môi trường **Development**.
 
 | Biến | Production | Preview |
 |---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | URL prod (C2) | URL staging |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref-prod>.supabase.co` | `https://<ref-staging>.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon prod | anon staging |
 | `SUPABASE_SERVICE_ROLE_KEY` | service_role prod | service_role staging |
-| `NEXT_PUBLIC_SITE_URL` | `https://<domain-vercel>` | để trống (Claude xử lý ở Task 8) |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Site key (E2) | `1x00000000000000000000AA` |
-| `TURNSTILE_SECRET_KEY` | Secret key (E2) | `1x0000000000000000000000000000000AA` |
-| `SENTRY_DSN` | DSN (F2) | DSN (F2) |
-| `NEXT_PUBLIC_SENTRY_DSN` | DSN (F2) | DSN (F2) |
-| `CONTACT_EMAIL` | email liên hệ về dữ liệu, hiện trong câu đồng ý và trang /privacy (nên dùng email riêng cho dự án) | như Production |
+| `NEXT_PUBLIC_SITE_URL` | `https://<domain-vercel>` (ví dụ `https://diem-danh-qr.vercel.app`) | link nhánh, xem G3 |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Site key (E) | `1x00000000000000000000AA` |
+| `TURNSTILE_SECRET_KEY` | Secret key (E) | `1x0000000000000000000000000000000AA` |
+| `SENTRY_DSN` | DSN (F) | DSN (F) |
+| `NEXT_PUBLIC_SENTRY_DSN` | DSN (F) | DSN (F) |
+| `CONTACT_EMAIL` | email liên hệ về dữ liệu (nên dùng email riêng cho dự án) | như Production |
 
-3. Báo Claude "xong mục G". Claude sẽ hỏi bạn trước khi deploy lần đầu.
-4. Có domain Vercel rồi thì quay lại hoàn thiện mục D2, D4 (prod) và E1.
+Domain prod xem ở tab **Settings → Domains** (thường là `<tên-project>.vercel.app`).
+
+**G3. Link nhánh cho Preview**
+1. Vào tab **Deployments**. Sau khi Claude push, sẽ có một deployment của nhánh `feature/ke-hoach-1`.
+2. Bấm vào deployment đó, ở mục **Domains** sẽ có một link dạng `https://diem-danh-qr-git-feature-ke-hoach-1-<tên-tài-khoản>.vercel.app`. Link này cố định cho nhánh.
+3. Dùng link đó làm giá trị Preview của `NEXT_PUBLIC_SITE_URL` (G2).
+4. Biến môi trường chỉ có hiệu lực từ lần build sau: ở deployment đó bấm **⋯ → Redeploy**.
+
+**G4. Bảo vệ bản Preview**
+Mặc định Vercel bắt đăng nhập Vercel mới xem được bản Preview (Deployment Protection). Giữ nguyên là an toàn; muốn thử bằng điện thoại thì đăng nhập Vercel trên điện thoại, hoặc tạm tắt ở **Settings → Deployment Protection** rồi bật lại sau khi thử.
+
+Xong thì báo Claude "xong mục G" kèm domain prod và link nhánh (đây không phải bí mật).
 
 ---
 
