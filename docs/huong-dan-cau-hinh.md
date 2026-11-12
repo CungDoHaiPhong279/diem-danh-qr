@@ -107,9 +107,9 @@ Repo đang để public, nên cần bật tính năng chặn lộ khóa.
    npx supabase link --project-ref <ref-staging>
    ```
    ```bash
-   npx supabase db push
+   npx supabase db push --remote
    ```
-   Lặp lại 2 lệnh cuối với `<ref-prod>`. Đúng khi lệnh `db push` báo đã áp dụng 2 migration (`..._schema.sql`, `..._register.sql`).
+   (Phải có `--remote`; không có thì CLI đẩy vào Supabase trên máy.) Lặp lại 2 lệnh cuối với `<ref-prod>`. Đúng khi lệnh `db push` báo đã áp dụng 2 migration (`..._schema.sql`, `..._register.sql`).
 
 Lưu ý: project Free bị **tạm dừng sau 1 tuần không có truy cập**.
 - Bản prod có cron `/api/health` gọi mỗi ngày để giữ project chạy. Claude làm việc này ở Task 8.
