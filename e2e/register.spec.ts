@@ -27,8 +27,8 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await admin.from("events").delete().eq("id", eventId); // cascades tickets
-  await admin.auth.admin.deleteUser(ownerId);
+  if (eventId) await admin.from("events").delete().eq("id", eventId); // cascades tickets
+  if (ownerId) await admin.auth.admin.deleteUser(ownerId);
 });
 
 async function register(page: import("@playwright/test").Page) {
@@ -55,7 +55,7 @@ test("second registration says already registered", async ({ page }) => {
   await expect(page.getByText("đã đăng ký sự kiện")).toBeVisible();
 });
 
-test("unknown token is 404", async ({ page }) => {
+test("unknown token shows not-found page (noindex)", async ({ page }) => {
   // With cacheComponents the shell is sent first, so notFound() inside <Suspense> keeps HTTP 200
   // (https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes); Next marks it noindex instead.
   await page.goto(`/t/${"0".repeat(32)}`);

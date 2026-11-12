@@ -1,6 +1,8 @@
 import { expect, test, vi } from "vitest";
 import { isValidToken, ticketUrl } from "@/lib/ticket";
 
+vi.mock("@/lib/supabase/admin", () => ({ admin: {} }));
+
 test("isValidToken", () => {
   expect(isValidToken("a".repeat(32))).toBe(true);
   expect(isValidToken("A".repeat(32))).toBe(false);

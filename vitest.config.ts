@@ -14,6 +14,6 @@ export default defineConfig(({ mode }) => {
       "server-only": path.resolve(__dirname, "tests/stubs/server-only.ts"),
     },
   },
-  test: { env: { ...env, NEXT_PUBLIC_SUPABASE_URL: env.SUPABASE_URL }, fileParallelism: false },
+  test: { env: { ...env, ...(env.SUPABASE_URL && { NEXT_PUBLIC_SUPABASE_URL: env.SUPABASE_URL }) }, fileParallelism: false },
   };
 });
