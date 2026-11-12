@@ -8,5 +8,6 @@ Sentry.init({
   dataCollection: { userInfo: false, cookies: false, httpBodies: [], httpHeaders: { request: { allow: ["user-agent", "content-type"] }, response: false } }, // v11 replaced sendDefaultPii
   tracesSampleRate: 0.1,
   beforeSend: scrubEvent,
-  beforeSendTransaction: scrubEvent,
+  // v11 streams spans by default; beforeSendTransaction is ignored, beforeSendSpan is not.
+  beforeSendSpan: scrubEvent,
 });

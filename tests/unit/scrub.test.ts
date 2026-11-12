@@ -32,4 +32,9 @@ describe("scrubEvent", () => {
     expect(e.request.headers.other).toBe("x");
   });
   it("tolerates an empty event", () => expect(scrubEvent({})).toEqual({}));
+  it("scrubs a streamed span (beforeSendSpan shape)", () => {
+    const span = scrubEvent({ name: `GET /t/${T}`, attributes: { "url.full": U, "http.route": "/t/[token]" } });
+    expect(JSON.stringify(span)).not.toContain(T);
+    expect(span.attributes["url.full"]).toBe(S);
+  });
 });
