@@ -30,19 +30,21 @@ export function RegisterForm({ eventId, consentLabel, siteKey }: { eventId: stri
   useEffect(() => {
     if (state && widgetId.current) window.turnstile?.reset(widgetId.current);
   }, [state]);
-  useEffect(
-    () => () => {
-      if (widgetId.current) window.turnstile?.remove(widgetId.current);
-      widgetId.current = null;
-    },
-    [],
-  );
-  // onReady also fires on remount (client navigation) when the script is already loaded.
   const renderWidget = () => {
     if (siteKey && box.current && window.turnstile && !widgetId.current) {
       widgetId.current = window.turnstile.render(box.current, { sitekey: siteKey });
     }
   };
+  // Script onReady covers the first load; this effect covers remounts (client navigation, Strict Mode),
+  // where next/script deliberately does not call onReady again.
+  useEffect(() => {
+    renderWidget();
+    return () => {
+      if (widgetId.current) window.turnstile?.remove(widgetId.current);
+      widgetId.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <form action={action} className="space-y-3">
       {FIELDS.map(([name, label, auto]) => (
