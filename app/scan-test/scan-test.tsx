@@ -63,6 +63,7 @@ export function ScanTest() {
       return;
     }
     const run = ++runRef.current;
+    setRunning(true); // show "Dừng" during the permission prompt; blocks a second start
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
@@ -76,9 +77,9 @@ export function ScanTest() {
       const video = videoRef.current!;
       video.srcObject = stream;
       await video.play();
-      setRunning(true);
       void loop(run, video, performance.now());
     } catch (e) {
+      if (run !== runRef.current) return; // stopped meanwhile
       const name = e instanceof DOMException ? e.name : "";
       setError(
         name === "NotAllowedError" || name === "SecurityError"
@@ -102,6 +103,7 @@ export function ScanTest() {
         const t0 = performance.now();
         try {
           const codes = await detector.detect(video);
+          if (run !== runRef.current) return;
           const now = performance.now();
           for (const { rawValue } of codes) {
             if (now - (lastSeen.get(rawValue) ?? -Infinity) < DEDUPE_MS) continue;
@@ -115,6 +117,7 @@ export function ScanTest() {
             setResults((prev) => [r, ...prev].slice(0, MAX_RESULTS));
           }
         } catch (e) {
+          if (run !== runRef.current) return;
           setError(`Lỗi giải mã: ${e instanceof Error ? e.message : String(e)}`);
           stop();
           return;
