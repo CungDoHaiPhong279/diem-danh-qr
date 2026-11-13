@@ -7,6 +7,8 @@ import { GoogleIcon } from "@/components/icons";
 
 const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
+const CALLBACK_ERROR = "Đăng nhập không thành công, vui lòng thử lại. Nếu đang mở trong Zalo/Facebook, hãy mở bằng Safari hoặc Chrome.";
+
 export default function LoginPage() {
   // Google blocks OAuth inside these in-app browsers; server snapshot is false.
   const inApp = useSyncExternalStore(
@@ -15,7 +17,14 @@ export default function LoginPage() {
     () => false,
   );
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
+  const [signInError, setError] = useState("");
+  // /auth/callback sends failures back as /login?error=1; server snapshot is false.
+  const callbackFailed = useSyncExternalStore(
+    () => () => {},
+    () => new URLSearchParams(window.location.search).has("error"),
+    () => false,
+  );
+  const error = signInError || (callbackFailed ? CALLBACK_ERROR : "");
   const [loading, setLoading] = useState(false);
 
   async function signIn() {
@@ -32,8 +41,12 @@ export default function LoginPage() {
   }
 
   async function copyLink() {
-    await navigator.clipboard.writeText(window.location.href);
-    setCopied(true);
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+    } catch {
+      window.prompt("Sao chép link này rồi mở bằng Safari hoặc Chrome:", window.location.href);
+    }
   }
 
   return (

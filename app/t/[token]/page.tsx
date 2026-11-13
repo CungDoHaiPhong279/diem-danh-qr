@@ -46,8 +46,9 @@ async function Ticket({ params }: { params: Promise<{ token: string }> }) {
           </div>
         )}
         {/* eslint-disable-next-line @next/next/no-img-element -- data URL, nothing to optimize */}
-        <img src={qr} alt="Mã QR vé" width={260} height={260} className="size-65 rounded-2xl border border-line bg-white" />
-        <p className="mt-5 font-mono text-3xl font-bold tracking-[0.3em] pl-[0.3em]" aria-label="Mã vé">
+        <img src={qr} alt="Mã QR vé" width={260} height={260} className="size-65 max-w-full h-auto rounded-2xl border border-line bg-white" />
+        <p className="mt-5 font-mono text-3xl font-bold tracking-[0.3em] pl-[0.3em]">
+          <span className="sr-only">Mã vé: </span>
           {t.short_code}
         </p>
         <p className="mt-3 text-lg font-semibold">{t.name}</p>
