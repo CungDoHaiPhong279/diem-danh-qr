@@ -47,7 +47,7 @@ test("register shows ticket", async ({ page }) => {
   await register(page);
   await expect(page).toHaveURL(/\/t\/[0-9a-f]{32}$/);
   await expect(page.locator('img[alt="Mã QR vé"]')).toBeVisible();
-  await expect(page.getByLabel("Mã vé")).toHaveText(/^[A-Z0-9]{8}$/);
+  await expect(page.getByText(/^Mã vé: [A-Z0-9]{8}$/)).toBeVisible();
 });
 
 test("second registration says already registered", async ({ page }) => {

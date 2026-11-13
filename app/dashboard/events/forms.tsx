@@ -60,7 +60,7 @@ export function ToggleOpenForm({ id, open }: { id: string; open: boolean }) {
         type="submit"
         role="switch"
         aria-checked={open}
-        aria-label={open ? "Đóng đăng ký" : "Mở đăng ký"}
+        aria-label="Mở đăng ký"
         disabled={pending}
         className={`relative h-7 w-12 shrink-0 rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-60 ${open ? "bg-brand-600" : "bg-stone-300"}`}
       >
