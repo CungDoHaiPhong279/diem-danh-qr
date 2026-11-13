@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* Light-only on purpose: QR codes and printed posters need a white surface. */
+@theme {
+  --font-sans: var(--font-be-vietnam), ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: #f6f5f2;
+  --color-surface: #ffffff;
+  --color-line: #e6e3dd;
+  --color-ink: #1c1917;
+  --color-ink-soft: #57534e;
+  --color-ink-mute: #8a847d;
+
+  --color-brand-50: #eefaf6;
+  --color-brand-100: #d3f2e8;
+  --color-brand-200: #a8e3d2;
+  --color-brand-500: #14946f;
+  --color-brand-600: #0d7a5c;
+  --color-brand-700: #0b624b;
+  --color-brand-900: #0a3a2e;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+::selection {
+  background: var(--color-brand-100);
+}
