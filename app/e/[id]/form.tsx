@@ -48,6 +48,13 @@ export function RegisterForm({ eventId, consentLabel, siteKey }: { eventId: stri
   const widgetId = useRef<string | null>(null);
   // Submit stays disabled until Turnstile has issued a token, so nobody posts an empty one.
   const [verified, setVerified] = useState(false);
+  // Script blocked/failed, widget error, or no token within 10 s: say so instead of waiting forever.
+  const [verifyFailed, setVerifyFailed] = useState(false);
+  useEffect(() => {
+    if (!siteKey || verified || verifyFailed) return;
+    const t = setTimeout(() => setVerifyFailed(true), 10000);
+    return () => clearTimeout(t);
+  }, [siteKey, verified, verifyFailed, state]);
   useEffect(() => {
     if (state && widgetId.current) {
       window.turnstile?.reset(widgetId.current);
@@ -59,9 +66,15 @@ export function RegisterForm({ eventId, consentLabel, siteKey }: { eventId: stri
       widgetId.current = window.turnstile.render(box.current, {
         sitekey: siteKey,
         size: "flexible",
-        callback: () => setVerified(true),
+        callback: () => {
+          setVerified(true);
+          setVerifyFailed(false);
+        },
         "expired-callback": () => setVerified(false),
-        "error-callback": () => setVerified(false),
+        "error-callback": () => {
+          setVerified(false);
+          setVerifyFailed(true);
+        },
       });
     }
   };
@@ -117,11 +130,20 @@ export function RegisterForm({ eventId, consentLabel, siteKey }: { eventId: stri
 
       {siteKey ? (
         <>
-          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={renderWidget} />
+          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={renderWidget} onError={() => setVerifyFailed(true)} />
           <div ref={box} className="min-h-[65px]" />
         </>
       ) : (
         <Alert>Trang đăng ký chưa được cấu hình chống bot, vui lòng báo ban tổ chức.</Alert>
+      )}
+
+      {siteKey && verifyFailed && !verified && (
+        <Alert>
+          <p>Không tải được bước xác minh chống spam. Hãy tải lại trang hoặc đổi mạng (4G/Wi-Fi) rồi thử lại.</p>
+          <button type="button" onClick={() => window.location.reload()} className="mt-1.5 font-semibold underline underline-offset-2">
+            Tải lại trang
+          </button>
+        </Alert>
       )}
 
       {state?.message && <Alert>{state.message}</Alert>}
