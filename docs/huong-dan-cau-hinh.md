@@ -205,3 +205,9 @@ Claude sẽ gửi link trang máy quét và bảng ghi kết quả. Bạn thử 
 - Trình duyệt bên trong Zalo.
 
 Ghi lại: camera có mở được không, và quét mất bao lâu.
+
+---
+
+## I. Xóa dữ liệu quá hạn
+
+Chưa có xóa tự động. Làm tay theo [docs/xoa-du-lieu.md](xoa-du-lieu.md) khi sự kiện quá 30 ngày.
