@@ -18,7 +18,7 @@ group by e.id
 order by e.purge_after;
 ```
 
-3. Nếu danh sách đúng như dự kiến, chạy khối sau (trong một giao dịch). Xóa vé và lịch sử điểm danh của các sự kiện đến hạn; bản ghi sự kiện (tiêu đề, thời gian) được giữ lại:
+3. Nếu danh sách đúng như dự kiến, chạy khối sau. Lưu ý: SQL Editor chạy cả khối một lần và `commit` thực hiện ngay, không có bước dừng để xem lại; bước kiểm tra duy nhất là bước 2. Khối chạy trong một giao dịch nên nếu một câu lỗi thì không câu nào được áp dụng. Xóa vé và lịch sử điểm danh của các sự kiện đến hạn; bản ghi sự kiện (tiêu đề, thời gian) được giữ lại:
 
 ```sql
 begin;
@@ -26,8 +26,7 @@ delete from public.checkin_events
 where event_id in (select id from public.events where purge_after < now());
 delete from public.tickets
 where event_id in (select id from public.events where purge_after < now());
--- Kiểm tra số dòng ở kết quả ở trên, rồi mới commit:
-commit;  -- đổi thành rollback; nếu thấy có gì sai
+commit;
 ```
 
 4. Chạy lại câu lệnh ở bước 2: cột `so_ve` phải bằng 0.
