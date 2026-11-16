@@ -26,7 +26,7 @@ async function Event({ params }: { params: Promise<{ id: string }> }) {
   if (!ev) notFound();
   const url = `${process.env.NEXT_PUBLIC_SITE_URL}/e/${ev.id}`;
   // 1024px so the downloaded file prints sharply on a poster; displayed smaller.
-  const qr = await QRCode.toDataURL(url, { errorCorrectionLevel: "M", width: 1024, margin: 2 });
+  const qr = await QRCode.toDataURL(url, { errorCorrectionLevel: "M", width: 1024, margin: 4 });
   const left = Math.max(0, ev.capacity - ev.seats_taken);
   return (
     <>

@@ -8,6 +8,10 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) return NextResponse.redirect(`${origin}/dashboard`);
+    console.error("auth callback: exchange failed", error.code ?? error.name);
+  } else if (searchParams.get("error")) {
+    console.error("auth callback: provider error", searchParams.get("error"), searchParams.get("error_description"));
   }
-  return NextResponse.redirect(`${origin}/login`);
+  // Fixed relative target, no user-supplied redirect.
+  return NextResponse.redirect(`${origin}/login?error=1`);
 }

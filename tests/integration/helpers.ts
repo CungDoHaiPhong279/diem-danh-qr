@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
 const url = process.env.SUPABASE_URL!;
+// These tests create users and delete data: refuse anything but a local Supabase.
+if (!["localhost", "127.0.0.1"].includes(URL.canParse(url ?? "") ? new URL(url!).hostname : "")) throw new Error(`Integration tests write data: refusing non-local SUPABASE_URL (${url})`);
 const opts = { auth: { persistSession: false, autoRefreshToken: false } };
 
 export const admin: SupabaseClient = createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, opts);

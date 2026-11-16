@@ -102,5 +102,5 @@ export function SiteFooter() {
 }
 
 export function Spinner() {
-  return <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />;
+  return <span className="size-4 animate-spin rounded-full border-2 border-current/30 border-t-current" aria-hidden />;
 }
