@@ -24,7 +24,7 @@ begin
     raise exception 'NOT_MEMBER' using errcode = '42501';
   end if;
   -- serialize per event so concurrent calls cannot leave two active links
-  perform 1 from public.events where id = p_event for update;
+  perform 1 from public.events where id = p_event for no key update;
   update public.event_invites set revoked_at = now()
   where event_id = p_event and revoked_at is null and expires_at > now();
   insert into public.event_invites (token, event_id, created_by) values (v_token, p_event, auth.uid());
@@ -68,6 +68,8 @@ begin
     raise exception 'NOT_MEMBER' using errcode = '42501';
   end if;
   delete from public.event_members where event_id = p_event and user_id = p_user and role = 'checker';
+  -- the removed checker must not rejoin with the old link
+  update public.event_invites set revoked_at = now() where event_id = p_event and revoked_at is null;
 end $$;
 
 create function public.member_names(p_event uuid)

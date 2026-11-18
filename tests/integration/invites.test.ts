@@ -41,20 +41,21 @@ describe("checker invites", () => {
     expect((await accept(b, t2)).error).toBeNull();
   });
 
+  // Smoke test, not proof of the lock: it may also pass without the FOR NO KEY UPDATE.
   it("concurrent creates leave exactly one active invite", async () => {
     const ev = await createEvent(owner.id);
-    const rs = await Promise.all(Array.from({ length: 4 }, () => owner.client.rpc("create_checker_invite", { p_event: ev.id })));
+    const rs = await Promise.all(Array.from({ length: 8 },() => owner.client.rpc("create_checker_invite", { p_event: ev.id })));
     rs.forEach((r) => expect(r.error).toBeNull());
     const { data } = await admin.from("event_invites").select("token, revoked_at, expires_at").eq("event_id", ev.id);
     const active = (data ?? []).filter((i) => i.revoked_at === null && new Date(i.expires_at) > new Date());
-    expect(data).toHaveLength(4);
+    expect(data).toHaveLength(8);
     expect(active).toHaveLength(1);
   });
 
   it("expired invite", async () => {
     const ev = await createEvent(owner.id);
     const token = await invite(ev.id);
-    await admin.from("event_invites").update({ expires_at: new Date(Date.now() - 1000).toISOString() }).eq("token", token);
+    await admin.from("event_invites").update({ expires_at: new Date(Date.now() - 3600_000).toISOString() }).eq("token", token);
     const b = await createTestUser();
     expect((await accept(b, token)).error?.message).toContain("INVITE_INVALID");
   });
@@ -101,6 +102,48 @@ describe("checker invites", () => {
     expect((await owner.client.rpc("remove_checker", { p_event: ev.id, p_user: owner.id })).error).toBeNull();
     const m = await admin.from("event_members").select("role").eq("event_id", ev.id).eq("user_id", owner.id).single();
     expect(m.data?.role).toBe("organizer");
+  });
+
+  it("remove_checker also revokes invites so the old link cannot be reused", async () => {
+    const ev = await createEvent(owner.id);
+    const token = await invite(ev.id);
+    const b = await createTestUser();
+    const c = await createTestUser();
+    expect((await accept(b, token)).error).toBeNull();
+    expect((await accept(c, token)).error).toBeNull();
+    expect((await owner.client.rpc("remove_checker", { p_event: ev.id, p_user: b.id })).error).toBeNull();
+    expect((await accept(b, token)).error?.message).toContain("INVITE_INVALID");
+    const m = await admin.from("event_members").select("user_id").eq("event_id", ev.id);
+    expect(m.data?.map((x) => x.user_id).sort()).toEqual([owner.id, c.id].sort());
+  });
+
+  it("checker cannot remove another checker", async () => {
+    const ev = await createEvent(owner.id);
+    const b = await createTestUser();
+    const c = await createTestUser();
+    await addMember(ev.id, b.id, "checker");
+    await addMember(ev.id, c.id, "checker");
+    expect((await b.client.rpc("remove_checker", { p_event: ev.id, p_user: c.id })).error?.code).toBe("42501");
+    const m = await admin.from("event_members").select("user_id").eq("event_id", ev.id).eq("user_id", c.id);
+    expect(m.data).toHaveLength(1);
+  });
+
+  it("invite_preview returns nothing for an expired token", async () => {
+    const ev = await createEvent(owner.id);
+    const token = await invite(ev.id);
+    await admin.from("event_invites").update({ expires_at: new Date(Date.now() - 3600_000).toISOString() }).eq("token", token);
+    const b = await createTestUser();
+    expect((await b.client.rpc("invite_preview", { p_token: token })).data).toEqual([]);
+  });
+
+  it("accepting an invite for event A grants nothing on event B", async () => {
+    const a = await createEvent(owner.id);
+    const evB = await createEvent(owner.id);
+    const token = await invite(a.id);
+    const u = await createTestUser();
+    expect((await accept(u, token)).error).toBeNull();
+    const c = await u.client.rpc("checkin", { p_event: evB.id, p_scan_id: randomUUID(), p_token: "0".repeat(32) });
+    expect(c.error?.code).toBe("42501");
   });
 
   it("member_names", async () => {
