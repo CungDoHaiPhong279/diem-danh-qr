@@ -116,10 +116,15 @@ export function CopyButton({ text, promptLabel }: { text: string; promptLabel: s
     }
   }
   return (
-    <Button type="button" variant="secondary" onClick={copy}>
-      {copied ? <CheckIcon width={18} height={18} className="text-brand-600" /> : <CopyIcon width={18} height={18} />}
-      {copied ? "Đã chép" : "Sao chép"}
-    </Button>
+    <>
+      <Button type="button" variant="secondary" onClick={copy}>
+        {copied ? <CheckIcon width={18} height={18} className="text-brand-600" /> : <CopyIcon width={18} height={18} />}
+        {copied ? "Đã chép" : "Sao chép"}
+      </Button>
+      <span role="status" aria-live="polite" className="sr-only">
+        {copied ? "Đã chép" : ""}
+      </span>
+    </>
   );
 }
 

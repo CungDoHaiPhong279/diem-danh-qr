@@ -60,10 +60,12 @@ async function Event({ params }: { params: Promise<{ id: string }> }) {
         {actions}
       </>
     );
-  const [{ data: invite }, { data: members }] = await Promise.all([
+  const [{ data: invite, error: inviteError }, { data: members, error: membersError }] = await Promise.all([
     supabase.from("event_invites").select("token, expires_at").eq("event_id", id).is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle(),
     supabase.rpc("member_names", { p_event: id }),
   ]);
+  const loadFailed = !!(inviteError || membersError);
+  if (loadFailed) console.error("event page: invite load failed", inviteError?.code, membersError?.code);
   const checkers = ((members ?? []) as { user_id: string; role: string; name: string }[]).filter((m) => m.role === "checker").map(({ user_id, name }) => ({ user_id, name }));
   const inviteLink = invite ? `${process.env.NEXT_PUBLIC_SITE_URL}/invite/${invite.token}` : null;
   const inviteExpires = invite ? `${formatTime(invite.expires_at)} · ${formatDate(invite.expires_at)}` : null;
@@ -101,7 +103,7 @@ async function Event({ params }: { params: Promise<{ id: string }> }) {
             </div>
           </Card>
           <Card className="p-6">
-            <Invites eventId={ev.id} link={inviteLink} expires={inviteExpires} checkers={checkers} />
+            <Invites eventId={ev.id} link={inviteLink} expires={inviteExpires} checkers={checkers} loadFailed={loadFailed} />
           </Card>
         </div>
 

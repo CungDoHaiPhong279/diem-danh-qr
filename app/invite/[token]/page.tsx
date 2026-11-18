@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { Alert, Card, Logo, SiteFooter } from "@/components/ui";
 import { IN_APP_BROWSER } from "@/lib/constants";
+import { safeNext } from "@/lib/safe-next";
 import { rpcErrorMessage } from "@/lib/rpc-error";
 import { createClient, requireUser } from "@/lib/supabase/server";
 import { isValidToken } from "@/lib/ticket";
@@ -12,13 +14,16 @@ export const metadata: Metadata = { title: "Lời mời soát vé" };
 
 async function Invite({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  await requireUser();
   let preview: { club_name: string; title: string } | undefined;
   if (isValidToken(token)) {
     const supabase = await createClient();
+    // Normally the proxy redirects first; this keeps the invite if the session vanishes in between.
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) redirect(`/login?next=${encodeURIComponent(safeNext(`/invite/${token}`))}`);
     const { data } = await supabase.rpc("invite_preview", { p_token: token });
     preview = data?.[0];
   }
+  if (!isValidToken(token)) await requireUser();
   if (!preview) return <Alert>{rpcErrorMessage({ message: "INVITE_INVALID" })}</Alert>;
   const inApp = IN_APP_BROWSER.test((await headers()).get("user-agent") ?? "");
   return (

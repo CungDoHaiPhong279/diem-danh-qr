@@ -23,7 +23,7 @@ function Remove({ eventId, userId, name }: { eventId: string; userId: string; na
             </Button>
           </form>
         ) : (
-          <Button type="button" size="sm" variant="secondary" onClick={() => setConfirming(true)}>
+          <Button type="button" size="sm" variant="secondary" aria-label={`Gỡ ${name}`} onClick={() => setConfirming(true)}>
             Gỡ
           </Button>
         )}
@@ -42,26 +42,35 @@ export function Invites({
   link,
   expires,
   checkers,
+  loadFailed,
 }: {
   eventId: string;
   link: string | null;
   expires: string | null;
   checkers: { user_id: string; name: string }[];
+  loadFailed: boolean;
 }) {
+  // Whichever action ran last owns the error; a success clears the other's stale message.
+  const [last, setLast] = useState<"create" | "revoke" | null>(null);
   const [createState, create, creating] = useActionState(createInvite.bind(null, eventId), null);
   const [revokeState, revoke, revoking] = useActionState(revokeInvites.bind(null, eventId), null);
-  const message = createState?.message || revokeState?.message;
+  const message = last === "create" ? createState?.message : last === "revoke" ? revokeState?.message : undefined;
   return (
     <div>
       <h2 className="font-semibold">Người soát vé</h2>
       <p className="mt-1 text-sm text-ink-soft">Gửi link cho người soát vé. Họ đăng nhập Google rồi bấm nhận. Mỗi sự kiện chỉ có một link đang dùng.</p>
+      {loadFailed && (
+        <div className="mt-4">
+          <Alert>Không tải được danh sách người soát vé, hãy tải lại trang</Alert>
+        </div>
+      )}
       {link && (
         <div className="mt-4">
           <p className="truncate rounded-xl bg-canvas px-3 py-2.5 font-mono text-[13px] text-ink-soft">{link.replace(/^https?:\/\//, "")}</p>
           {expires && <p className="mt-1.5 text-sm text-ink-soft">Hết hạn: {expires}</p>}
           <div className="mt-3 grid grid-cols-2 gap-2">
             <CopyButton text={link} promptLabel="Sao chép link mời:" />
-            <form action={revoke}>
+            <form action={revoke} onSubmit={() => setLast("revoke")}>
               <Button type="submit" variant="secondary" disabled={revoking} className="w-full">
                 {revoking ? <Spinner /> : "Thu hồi link"}
               </Button>
@@ -69,7 +78,7 @@ export function Invites({
           </div>
         </div>
       )}
-      <form action={create} className="mt-3">
+      <form action={create} onSubmit={() => setLast("create")} className="mt-3">
         <Button type="submit" variant={link ? "ghost" : "primary"} disabled={creating} className="w-full">
           {creating && <Spinner />} {link ? "Tạo link mới (link cũ ngừng dùng)" : "Tạo link mời"}
         </Button>
@@ -80,7 +89,7 @@ export function Invites({
         </div>
       )}
       <ul className="mt-4 divide-y divide-line">
-        {checkers.length === 0 && <li className="py-2.5 text-sm text-ink-soft">Chưa có người soát vé.</li>}
+        {!loadFailed && checkers.length === 0 && <li className="py-2.5 text-sm text-ink-soft">Chưa có người soát vé.</li>}
         {checkers.map((c) => (
           <Remove key={c.user_id} eventId={eventId} userId={c.user_id} name={c.name} />
         ))}
