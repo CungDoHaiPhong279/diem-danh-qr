@@ -12,15 +12,17 @@ export type TicketHit = { id: string; name: string; studentId: string | null; cl
 export async function checkIn(input: { eventId: string; scanId: string; token?: string; ticketId?: string; scannedAt?: string }): Promise<CheckinOutcome> {
   // No redirect here: the scanner would read it as a network failure and queue the scan.
   const supabase = await createClient();
-  const { data: auth } = await supabase.auth.getUser();
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  // Auth server unreachable (no status / 5xx) is infra, not "logged out": throw so the scan is queued.
+  if (authError && !(authError.status && authError.status < 500)) throw new Error("auth unavailable");
   if (!auth.user) return { kind: "forbidden" };
-  const { eventId, scanId, token, ticketId } = input ?? {};
+  const { eventId, scanId, token, ticketId, scannedAt: rawScannedAt } = input ?? {};
   const isStr = (v: unknown): v is string => typeof v === "string";
   if (!isStr(eventId) || !UUID.test(eventId) || !isStr(scanId) || !UUID.test(scanId)) return BAD_QR;
   if ((token === undefined) === (ticketId === undefined)) return BAD_QR;
   if (token !== undefined && !(isStr(token) && isValidToken(token))) return BAD_QR;
   if (ticketId !== undefined && !(isStr(ticketId) && UUID.test(ticketId))) return BAD_QR;
-  const t = isStr(input.scannedAt) && input.scannedAt ? new Date(input.scannedAt) : null;
+  const t = isStr(rawScannedAt) && rawScannedAt ? new Date(rawScannedAt) : null;
   const scannedAt = t && !Number.isNaN(t.getTime()) ? t.toISOString() : null;
 
   const { data, error } = await supabase.rpc("checkin", {
