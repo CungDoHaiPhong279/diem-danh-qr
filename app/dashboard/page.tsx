@@ -13,7 +13,7 @@ async function Events() {
   const supabase = await createClient();
   const { data: events, error } = await supabase
     .from("events")
-    .select("id, title, club_name, location, starts_at, capacity, seats_taken, registration_open, event_members!inner(user_id)")
+    .select("id, title, club_name, location, starts_at, capacity, seats_taken, registration_open, event_members!inner(user_id, role)")
     .eq("event_members.user_id", user.id)
     .order("starts_at", { ascending: false });
   if (error) throw error;
@@ -40,7 +40,12 @@ async function Events() {
           >
             <div className="flex items-start justify-between gap-3">
               <p className="truncate text-xs font-semibold tracking-wide text-brand-700 uppercase">{e.club_name}</p>
-              <Badge tone={e.registration_open ? "open" : "closed"}>{e.registration_open ? "Đang mở" : "Đã đóng"}</Badge>
+              <span className="flex shrink-0 items-center gap-1.5">
+                {e.event_members[0]?.role === "checker" && (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">Soát vé</span>
+                )}
+                <Badge tone={e.registration_open ? "open" : "closed"}>{e.registration_open ? "Đang mở" : "Đã đóng"}</Badge>
+              </span>
             </div>
             <h2 className="mt-2 line-clamp-2 font-semibold text-ink group-hover:text-brand-700">{e.title}</h2>
             <div className="mt-3 space-y-1.5 text-sm text-ink-soft">

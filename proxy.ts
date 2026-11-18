@@ -14,8 +14,15 @@ export async function proxy(request: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getUser();
-  if (!data.user) return NextResponse.redirect(new URL("/login", request.url));
+  if (!data.user) {
+    const login = new URL("/login", request.url);
+    login.searchParams.set("next", request.nextUrl.pathname);
+    const redirect = NextResponse.redirect(login);
+    // keep any refreshed/cleared session cookies
+    response.cookies.getAll().forEach((c) => redirect.cookies.set(c));
+    return redirect;
+  }
   return response;
 }
 
-export const config = { matcher: "/dashboard/:path*" };
+export const config = { matcher: ["/dashboard/:path*", "/invite/:path*"] };

@@ -5,9 +5,10 @@ import { notFound } from "next/navigation";
 import QRCode from "qrcode";
 import { createClient, requireUser } from "@/lib/supabase/server";
 import { formatDate, formatTime } from "@/lib/format";
-import { Badge, Card, Progress } from "@/components/ui";
+import { Badge, Card, Progress, buttonClass } from "@/components/ui";
 import { ArrowLeftIcon, CalendarIcon, PinIcon } from "@/components/icons";
 import { CapacityForm, ShareActions, ToggleOpenForm } from "../forms";
+import { Invites } from "./invites";
 
 export const metadata: Metadata = { title: "Quản lý sự kiện" };
 
@@ -15,15 +16,57 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function Event({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await requireUser();
+  const user = await requireUser();
   if (!UUID.test(id)) notFound();
   const supabase = await createClient();
   const { data: ev } = await supabase
     .from("events")
-    .select("id, title, club_name, location, starts_at, capacity, seats_taken, registration_open")
+    .select("id, title, club_name, location, starts_at, capacity, seats_taken, registration_open, event_members!inner(user_id, role)")
     .eq("id", id)
+    .eq("event_members.user_id", user.id)
     .maybeSingle();
   if (!ev) notFound();
+  const organizer = ev.event_members[0]?.role === "organizer";
+  const actions = (
+    <div className="mt-5 grid gap-2 sm:grid-cols-2">
+      <Link href={`/dashboard/events/${ev.id}/scan`} className={buttonClass("primary", "lg")}>
+        Mở máy quét
+      </Link>
+      <Link href={`/dashboard/events/${ev.id}/attendees`} className={buttonClass("secondary", "lg")}>
+        Danh sách điểm danh
+      </Link>
+    </div>
+  );
+  const header = (
+    <div className="min-w-0">
+      <p className="text-xs font-semibold tracking-wide text-brand-700 uppercase">{ev.club_name}</p>
+      <h1 className="mt-1 text-2xl font-bold tracking-tight text-balance">{ev.title}</h1>
+      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[15px] text-ink-soft">
+        <span className="inline-flex items-center gap-2">
+          <CalendarIcon width={17} height={17} className="text-ink-mute" />
+          {formatTime(ev.starts_at)} · {formatDate(ev.starts_at)}
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <PinIcon width={17} height={17} className="text-ink-mute" />
+          {ev.location}
+        </span>
+      </div>
+    </div>
+  );
+  if (!organizer)
+    return (
+      <>
+        {header}
+        {actions}
+      </>
+    );
+  const [{ data: invite }, { data: members }] = await Promise.all([
+    supabase.from("event_invites").select("token, expires_at").eq("event_id", id).is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle(),
+    supabase.rpc("member_names", { p_event: id }),
+  ]);
+  const checkers = ((members ?? []) as { user_id: string; role: string; name: string }[]).filter((m) => m.role === "checker").map(({ user_id, name }) => ({ user_id, name }));
+  const inviteLink = invite ? `${process.env.NEXT_PUBLIC_SITE_URL}/invite/${invite.token}` : null;
+  const inviteExpires = invite ? `${formatTime(invite.expires_at)} · ${formatDate(invite.expires_at)}` : null;
   const url = `${process.env.NEXT_PUBLIC_SITE_URL}/e/${ev.id}`;
   // 1024px so the downloaded file prints sharply on a poster; displayed smaller.
   const qr = await QRCode.toDataURL(url, { errorCorrectionLevel: "M", width: 1024, margin: 4 });
@@ -31,22 +74,10 @@ async function Event({ params }: { params: Promise<{ id: string }> }) {
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold tracking-wide text-brand-700 uppercase">{ev.club_name}</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-balance">{ev.title}</h1>
-          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[15px] text-ink-soft">
-            <span className="inline-flex items-center gap-2">
-              <CalendarIcon width={17} height={17} className="text-ink-mute" />
-              {formatTime(ev.starts_at)} · {formatDate(ev.starts_at)}
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <PinIcon width={17} height={17} className="text-ink-mute" />
-              {ev.location}
-            </span>
-          </div>
-        </div>
+        {header}
         <Badge tone={ev.registration_open ? "open" : "closed"}>{ev.registration_open ? "Đang mở đăng ký" : "Đã đóng đăng ký"}</Badge>
       </div>
+      {actions}
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-5">
@@ -68,6 +99,9 @@ async function Event({ params }: { params: Promise<{ id: string }> }) {
             <div className="p-6">
               <CapacityForm id={ev.id} capacity={ev.capacity} />
             </div>
+          </Card>
+          <Card className="p-6">
+            <Invites eventId={ev.id} link={inviteLink} expires={inviteExpires} checkers={checkers} />
           </Card>
         </div>
 

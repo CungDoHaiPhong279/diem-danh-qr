@@ -211,3 +211,13 @@ Ghi lại: camera có mở được không, và quét mất bao lâu.
 ## I. Xóa dữ liệu quá hạn
 
 Chưa có xóa tự động. Làm tay theo [docs/xoa-du-lieu.md](xoa-du-lieu.md) khi sự kiện quá 30 ngày.
+
+---
+
+## J. Mời người soát vé
+
+1. Vào trang quản lý sự kiện, kéo xuống khối **Người soát vé**, bấm **Tạo link mời**. Link có hạn 7 ngày. Tạo link mới thì link cũ ngừng dùng. Bấm **Thu hồi link** nếu lỡ gửi nhầm.
+2. Bấm **Sao chép** rồi gửi link qua Zalo cho người soát vé.
+3. **Dặn người soát vé mở link bằng Safari hoặc Chrome**, không mở trong Zalo/Facebook/Messenger, vì Google chặn đăng nhập trong các trình duyệt đó. Trong Zalo, bấm dấu ba chấm rồi chọn mở bằng trình duyệt, hoặc sao chép link.
+4. Họ đăng nhập bằng Google, đọc tên sự kiện rồi bấm **Nhận vai trò soát vé**. Mở link thôi thì chưa được cấp quyền.
+5. Muốn thu quyền một người: bấm **Gỡ** cạnh tên họ rồi xác nhận. Link mời cũ cũng bị thu hồi để họ không vào lại được.

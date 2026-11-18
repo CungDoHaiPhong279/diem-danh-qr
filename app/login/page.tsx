@@ -4,6 +4,8 @@ import { createBrowserClient } from "@supabase/ssr";
 import { useState, useSyncExternalStore } from "react";
 import { Alert, Button, Card, Logo, SiteFooter, Spinner } from "@/components/ui";
 import { GoogleIcon } from "@/components/icons";
+import { IN_APP_BROWSER } from "@/lib/constants";
+import { safeNext } from "@/lib/safe-next";
 
 const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
@@ -13,7 +15,7 @@ export default function LoginPage() {
   // Google blocks OAuth inside these in-app browsers; server snapshot is false.
   const inApp = useSyncExternalStore(
     () => () => {},
-    () => /Zalo|FBAN|FBAV|Messenger/i.test(navigator.userAgent),
+    () => IN_APP_BROWSER.test(navigator.userAgent),
     () => false,
   );
   const [copied, setCopied] = useState(false);
@@ -24,6 +26,11 @@ export default function LoginPage() {
     () => new URLSearchParams(window.location.search).has("error"),
     () => false,
   );
+  const next = useSyncExternalStore(
+    () => () => {},
+    () => safeNext(new URLSearchParams(window.location.search).get("next")),
+    () => "/dashboard",
+  );
   const error = signInError || (callbackFailed ? CALLBACK_ERROR : "");
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +39,7 @@ export default function LoginPage() {
     setError("");
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback` },
+      options: { redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback?next=${encodeURIComponent(next)}` },
     });
     if (error) {
       setError("Không thể đăng nhập, vui lòng thử lại.");

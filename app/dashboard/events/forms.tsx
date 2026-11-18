@@ -104,23 +104,29 @@ export function CapacityForm({ id, capacity }: { id: string; capacity: number })
   );
 }
 
-export function ShareActions({ url, qr, fileName }: { url: string; qr: string; fileName: string }) {
+export function CopyButton({ text, promptLabel }: { text: string; promptLabel: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      window.prompt("Sao chép link đăng ký:", url);
+      window.prompt(promptLabel, text);
     }
   }
   return (
+    <Button type="button" variant="secondary" onClick={copy}>
+      {copied ? <CheckIcon width={18} height={18} className="text-brand-600" /> : <CopyIcon width={18} height={18} />}
+      {copied ? "Đã chép" : "Sao chép"}
+    </Button>
+  );
+}
+
+export function ShareActions({ url, qr, fileName }: { url: string; qr: string; fileName: string }) {
+  return (
     <div className="grid grid-cols-2 gap-2">
-      <Button type="button" variant="secondary" onClick={copy}>
-        {copied ? <CheckIcon width={18} height={18} className="text-brand-600" /> : <CopyIcon width={18} height={18} />}
-        {copied ? "Đã chép" : "Sao chép"}
-      </Button>
+      <CopyButton text={url} promptLabel="Sao chép link đăng ký:" />
       <a href={qr} download={fileName} className={buttonClass("secondary")}>
         <DownloadIcon width={18} height={18} /> Tải QR
       </a>
