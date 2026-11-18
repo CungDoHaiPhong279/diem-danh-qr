@@ -18,6 +18,16 @@ describe("parseTicketToken", () => {
     expect(parseTicketToken(`${SITE}/t/${T}?a=1`, SITE)).toBe(T);
     expect(parseTicketToken(`${SITE}/t/${T}#x`, SITE)).toBe(T);
   });
+  test("origin edge cases", () => {
+    expect(parseTicketToken(`${SITE}/t/${T}`, `${SITE}/`)).toBe(T);
+    expect(parseTicketToken(`http://diem-danh-qr-gamma.vercel.app/t/${T}`, SITE)).toBeNull();
+    expect(parseTicketToken(`https://diem-danh-qr-gamma.vercel.app:8443/t/${T}`, SITE)).toBeNull();
+    expect(parseTicketToken(`https://DIEM-DANH-QR-GAMMA.vercel.app/t/${T}`, SITE)).toBe(T);
+    expect(parseTicketToken(`https://diem-danh-qr-gamma.vercel.app@evil.com/t/${T}`, SITE)).toBeNull();
+    expect(parseTicketToken(`  ${SITE}/t/${T}
+`, SITE)).toBe(T);
+    expect(parseTicketToken(`${SITE}/t/${"%61".repeat(32)}`, SITE)).toBeNull();
+  });
   test("bad siteUrl returns null instead of throwing", () => {
     expect(parseTicketToken(`${SITE}/t/${T}`, "")).toBeNull();
   });

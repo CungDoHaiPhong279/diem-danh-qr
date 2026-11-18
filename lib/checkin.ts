@@ -3,7 +3,7 @@ const TICKET_PATH = /^\/t\/([0-9a-f]{32})$/;
 
 export function parseTicketToken(raw: string, siteUrl: string): string | null {
   try {
-    const url = new URL(raw);
+    const url = new URL(raw.trim());
     if (url.origin !== new URL(siteUrl).origin) return null;
     return TICKET_PATH.exec(url.pathname)?.[1] ?? null;
   } catch {

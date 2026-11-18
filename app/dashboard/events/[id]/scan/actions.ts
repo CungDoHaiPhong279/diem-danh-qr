@@ -1,6 +1,6 @@
 "use server";
 
-import { createClient, requireUser } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { isValidToken } from "@/lib/ticket";
 import { mapCheckinRow, type CheckinOutcome } from "@/lib/checkin";
 
@@ -10,16 +10,19 @@ const BAD_QR: CheckinOutcome = { kind: "invalid", reason: "bad_qr" };
 export type TicketHit = { id: string; name: string; studentId: string | null; className: string | null; faculty: string | null; checkedInAt: string | null };
 
 export async function checkIn(input: { eventId: string; scanId: string; token?: string; ticketId?: string; scannedAt?: string }): Promise<CheckinOutcome> {
-  await requireUser();
-  const { eventId, scanId, token, ticketId } = input;
-  if (!UUID.test(eventId) || !UUID.test(scanId)) return BAD_QR;
+  // No redirect here: the scanner would read it as a network failure and queue the scan.
+  const supabase = await createClient();
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return { kind: "forbidden" };
+  const { eventId, scanId, token, ticketId } = input ?? {};
+  const isStr = (v: unknown): v is string => typeof v === "string";
+  if (!isStr(eventId) || !UUID.test(eventId) || !isStr(scanId) || !UUID.test(scanId)) return BAD_QR;
   if ((token === undefined) === (ticketId === undefined)) return BAD_QR;
-  if (token !== undefined && !isValidToken(token)) return BAD_QR;
-  if (ticketId !== undefined && !UUID.test(ticketId)) return BAD_QR;
-  const t = input.scannedAt ? new Date(input.scannedAt) : null;
+  if (token !== undefined && !(isStr(token) && isValidToken(token))) return BAD_QR;
+  if (ticketId !== undefined && !(isStr(ticketId) && UUID.test(ticketId))) return BAD_QR;
+  const t = isStr(input.scannedAt) && input.scannedAt ? new Date(input.scannedAt) : null;
   const scannedAt = t && !Number.isNaN(t.getTime()) ? t.toISOString() : null;
 
-  const supabase = await createClient();
   const { data, error } = await supabase.rpc("checkin", {
     p_event: eventId,
     p_scan_id: scanId,
@@ -37,10 +40,11 @@ export async function checkIn(input: { eventId: string; scanId: string; token?: 
 }
 
 export async function searchTickets(eventId: string, q: string): Promise<TicketHit[]> {
-  await requireUser();
-  if (!UUID.test(eventId)) return [];
+  if (typeof eventId !== "string" || !UUID.test(eventId) || typeof q !== "string") return [];
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("search_tickets", { p_event: eventId, p_query: q.trim() });
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return [];
+  const { data, error } = await supabase.rpc("search_tickets", { p_event: eventId, p_query: q.trim().slice(0, 100) });
   if (error) {
     if (error.code === "42501") return [];
     console.error("search_tickets rpc failed", error.code);
