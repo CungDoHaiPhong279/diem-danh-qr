@@ -6,6 +6,10 @@ alter table public.checkin_events drop constraint checkin_events_ticket_id_fkey;
 alter table public.checkin_events add constraint checkin_events_ticket_event_fkey
   foreign key (ticket_id, event_id) references public.tickets (id, event_id) on delete set null (ticket_id);
 
+alter table public.checkin_events
+  add constraint checkin_events_result_check check (result in ('ok', 'already', 'not_found', 'wrong_event', 'cancelled')),
+  add constraint checkin_events_method_check check (method is null or method in ('qr', 'manual'));
+
 -- Name order: profile, Google metadata, email local part. Internal only.
 create function public.user_display_name(p_user uuid)
 returns text
@@ -58,7 +62,7 @@ begin
   end if;
   if (p_token is null) = (p_ticket is null) then raise exception 'BAD_REQUEST'; end if;
 
-  select * into v_log from checkin_events where scan_id = p_scan_id;
+  select * into v_log from checkin_events where scan_id = p_scan_id and event_id = p_event;
   if found then return public.checkin_payload(v_log.result, v_log.ticket_id); end if;
 
   ts := least(now(), greatest(coalesce(p_scanned_at, now()), now() - interval '1 day'));
@@ -87,7 +91,9 @@ begin
   on conflict (scan_id) do nothing;
   if not found then
     -- a parallel retry of the same scan_id inserted first: return its stored result
-    select * into v_log from checkin_events where scan_id = p_scan_id;
+    select * into v_log from checkin_events where scan_id = p_scan_id and event_id = p_event;
+    -- scan_id already belongs to another event: never return that event's data
+    if not found then raise exception 'BAD_REQUEST'; end if;
     return public.checkin_payload(v_log.result, v_log.ticket_id);
   end if;
 

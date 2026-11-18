@@ -40,6 +40,9 @@ describe("checkin", () => {
     const t = await registerTicket(ev.id);
     const rs = await Promise.all([scan(checker, ev.id, t.token), scan(c2, ev.id, t.token)]);
     expect(rs.map((r) => r.data.result).sort()).toEqual(["already", "ok"]);
+    const already = rs.find((r) => r.data.result === "already")!.data;
+    expect(already.checked_in_at).not.toBeNull();
+    expect(already.checked_in_by_name).not.toBeNull();
     expect(await logCount(ev.id)).toBe(2);
   });
 
@@ -59,9 +62,49 @@ describe("checkin", () => {
     const other = await createEvent(owner.id);
     const t = await registerTicket(other.id);
     const r = await scan(checker, ev.id, t.token);
+    const nulls = { name: null, student_id: null, ticket_id: null, class_name: null, checked_in_at: null, checked_in_by_name: null };
+    expect(r.data).toEqual({ result: "wrong_event", ...nulls });
+    const { data } = await admin.from("tickets").select("checked_in_at").eq("id", t.id).single();
+    expect(data!.checked_in_at).toBeNull();
+    const { data: row } = await admin.from("checkin_events").select("ticket_id, scan_id").eq("event_id", ev.id).single();
+    expect(row!.ticket_id).toBeNull();
+    const replay = await checker.client.rpc("checkin", { p_event: ev.id, p_scan_id: row!.scan_id, p_token: t.token });
+    expect(replay.data).toEqual({ result: "wrong_event", ...nulls });
+  });
+
+  it("manual checkin with a ticket of another event is wrong_event", async () => {
+    const { ev, checker } = await setup();
+    const other = await createEvent(owner.id);
+    const t = await registerTicket(other.id);
+    const r = await checker.client.rpc("checkin", { p_event: ev.id, p_scan_id: randomUUID(), p_ticket: t.id });
     expect(r.data).toMatchObject({ result: "wrong_event", name: null, student_id: null, ticket_id: null });
     const { data } = await admin.from("tickets").select("checked_in_at").eq("id", t.id).single();
     expect(data!.checked_in_at).toBeNull();
+  });
+
+  it("same scan_id in parallel: both ok, one log row", async () => {
+    const { ev, checker } = await setup();
+    const t = await registerTicket(ev.id);
+    const args = { p_event: ev.id, p_scan_id: randomUUID(), p_token: t.token };
+    const rs = await Promise.all([checker.client.rpc("checkin", args), checker.client.rpc("checkin", args)]);
+    expect(rs.map((r) => r.data.result)).toEqual(["ok", "ok"]);
+    expect(await logCount(ev.id)).toBe(1);
+  });
+
+  it("replaying a scan_id from another event leaks nothing", async () => {
+    const { ev, checker } = await setup();
+    const t = await registerTicket(ev.id, { name: "Secret Name", student_id: "SECRET1" });
+    const scanId = randomUUID();
+    const r1 = await checker.client.rpc("checkin", { p_event: ev.id, p_scan_id: scanId, p_token: t.token });
+    expect(r1.data.result).toBe("ok");
+    const evB = await createEvent(owner.id);
+    const tb = await registerTicket(evB.id);
+    for (const token of [t.token, tb.token]) {
+      const r = await owner.client.rpc("checkin", { p_event: evB.id, p_scan_id: scanId, p_token: token });
+      expect(r.error?.message).toBe("BAD_REQUEST");
+      expect(JSON.stringify(r)).not.toContain("Secret Name");
+    }
+    expect(await logCount(evB.id)).toBe(0);
   });
 
   it("cancelled", async () => {
@@ -116,6 +159,9 @@ describe("checkin", () => {
     const r = await scan(checker, ev.id, t.token, { p_scanned_at: new Date(Date.now() - 3 * 86400000).toISOString() });
     expect(r.data.result).toBe("ok");
     expect(new Date(r.data.checked_in_at).getTime()).toBeGreaterThanOrEqual(Date.now() - 86400000 - 5000);
+    const t2 = await registerTicket(ev.id);
+    const r2 = await scan(checker, ev.id, t2.token, { p_scanned_at: new Date(Date.now() + 3 * 86400000).toISOString() });
+    expect(new Date(r2.data.checked_in_at).getTime()).toBeLessThanOrEqual(Date.now() + 5000);
   });
 
   it("composite FK", async () => {
@@ -151,6 +197,9 @@ describe("search_tickets", () => {
     expect((await search("_a")).data).toHaveLength(0);
     expect((await search("2025")).data).toHaveLength(1);
     expect((await search("n")).data).toHaveLength(0);
+    const other = await createEvent(owner.id);
+    await registerTicket(other.id, { name: "Nguyen Other" });
+    expect((await search("nguyen")).data).toHaveLength(1);
   });
 
   it("refuses non-members", async () => {
