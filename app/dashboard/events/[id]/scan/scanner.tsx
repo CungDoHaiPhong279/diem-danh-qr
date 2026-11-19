@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { parseTicketToken, type CheckinOutcome } from "@/lib/checkin";
 import { IN_APP_BROWSER } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
@@ -16,6 +16,7 @@ type Tone = "ok" | "bad" | "wait";
 type Entry = { id: string; at: string; shown: Shown };
 
 const RESULT_MS = 2000;
+const CHECKIN_TIMEOUT_MS = 8000;
 const HISTORY_SIZE = 10;
 const FOCUS_DARK = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white";
 const TONE_BG: Record<Tone, string> = { ok: "bg-scan-ok", bad: "bg-scan-bad", wait: "bg-scan-wait" };
@@ -50,57 +51,84 @@ function describe(s: Shown): { tone: Tone; status: string; label: string; name?:
 
 const noSubscribe = () => () => {};
 
+// randomUUID only exists in secure contexts (not on plain-http LAN); getRandomValues exists everywhere.
+function newId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([p, new Promise<never>((_, reject) => (t = setTimeout(() => reject(new Error("timeout")), ms)))]).finally(() => clearTimeout(t));
+}
+
 export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eventTitle: string; siteUrl: string }) {
   const [shown, setShown] = useState<Shown | null>(null);
   const [pending, setPending] = useState(false);
   const [history, setHistory] = useState<Entry[]>([]);
   const busyRef = useRef(false); // a check-in is in flight or a result is on screen
+  const retryRawRef = useRef<string | null>(null); // code to re-read right after a failed result closes
   const sheetRef = useRef<HTMLDialogElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
   const inAppBrowser = useSyncExternalStore(noSubscribe, () => IN_APP_BROWSER.test(navigator.userAgent), () => false);
 
-  const { videoRef, running, error, start } = useQrScanner((raw) => {
+  const { videoRef, running, error, start, stop, forget } = useQrScanner((raw) => {
     if (busyRef.current || sheetRef.current?.open) return false; // not taken: fires again when ready
-    busyRef.current = true;
     const token = parseTicketToken(raw, siteUrl);
-    if (!token) show({ kind: "unreadable" });
-    else void runCheckIn({ eventId, scanId: crypto.randomUUID(), token, scannedAt: new Date().toISOString() });
+    if (!token) {
+      busyRef.current = true;
+      retryRawRef.current = raw;
+      show({ kind: "unreadable" });
+      return;
+    }
+    const scanId = newId();
+    busyRef.current = true;
+    void runCheckIn({ eventId, scanId, token, scannedAt: new Date().toISOString() }, raw);
   });
 
+  const onResultTimeout = useEffectEvent(() => closeResult());
   useEffect(() => {
     if (!shown) return;
-    const t = setTimeout(() => {
-      setShown(null);
-      busyRef.current = false;
-    }, RESULT_MS);
+    const t = setTimeout(onResultTimeout, RESULT_MS);
     return () => clearTimeout(t);
   }, [shown]);
 
-  // Keep the screen on while the camera runs; the browser drops the lock when the tab hides.
+  // Keep the screen on while the camera runs. The browser drops the lock when the tab hides, so re-acquire on return.
   useEffect(() => {
     if (!running) return;
     let lock: WakeLockSentinel | null = null;
     let done = false;
+    const release = () => {
+      lock?.release().catch(() => {});
+      lock = null;
+    };
     const acquire = async () => {
+      release();
       try {
         const l = await navigator.wakeLock?.request("screen");
-        if (done) void l?.release();
+        if (done || document.visibilityState !== "visible") void l?.release().catch(() => {});
         else lock = l ?? null;
       } catch {}
     };
-    const onVisible = () => document.visibilityState === "visible" && void acquire();
+    const onVisibility = () => (document.visibilityState === "visible" ? void acquire() : release());
     void acquire();
-    document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       done = true;
-      document.removeEventListener("visibilitychange", onVisible);
-      lock?.release().catch(() => {});
+      document.removeEventListener("visibilitychange", onVisibility);
+      release();
     };
   }, [running]);
 
   function show(s: Shown) {
+    sheetRef.current?.close(); // a result must never sit under the top-layer dialog
     setPending(false);
     setShown(s);
-    setHistory((h) => [{ id: crypto.randomUUID(), at: new Date().toISOString(), shown: s }, ...h].slice(0, HISTORY_SIZE));
+    setHistory((h) => [{ id: newId(), at: new Date().toISOString(), shown: s }, ...h].slice(0, HISTORY_SIZE));
     const tone = describe(s).tone;
     try {
       if (tone !== "wait") navigator.vibrate?.(tone === "ok" ? 60 : [80, 60, 80]);
@@ -108,32 +136,37 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   }
 
   function closeResult() {
+    if (retryRawRef.current !== null) forget(retryRawRef.current);
+    retryRawRef.current = null;
     setShown(null);
     busyRef.current = false;
+    searchButtonRef.current?.focus({ preventScroll: true });
   }
 
-  async function runCheckIn(input: CheckinInput) {
+  async function runCheckIn(input: CheckinInput, raw?: string) {
     setPending(true);
     let outcome: CheckinOutcome;
     try {
-      outcome = await checkIn(input);
+      outcome = await withTimeout(checkIn(input), CHECKIN_TIMEOUT_MS);
     } catch {
-      handleCheckinError();
+      handleCheckinError(raw);
       return;
     }
     show(outcome);
   }
 
-  // checkIn threw (network/infra). Task 6 replaces this with the offline queue.
-  function handleCheckinError() {
+  // checkIn threw or timed out (network/infra). Task 6 replaces this with the offline queue.
+  function handleCheckinError(raw?: string) {
+    retryRawRef.current = raw ?? null;
     show({ kind: "network" });
   }
 
   function manualCheckIn(ticketId: string) {
-    if (busyRef.current) return;
+    if (busyRef.current) return; // buttons are disabled while pending; this guards a double tap
+    const scanId = newId();
     busyRef.current = true;
     sheetRef.current?.close();
-    void runCheckIn({ eventId, scanId: crypto.randomUUID(), ticketId });
+    void runCheckIn({ eventId, scanId, ticketId });
   }
 
   const d = shown && describe(shown);
@@ -147,6 +180,11 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
           </Link>
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{eventTitle}</h1>
           <PendingBadge count={0} />
+          {running && (
+            <button type="button" onClick={stop} className={`h-11 shrink-0 rounded-xl px-3 text-sm font-semibold text-white/90 hover:bg-white/10 ${FOCUS_DARK}`}>
+              Tắt camera
+            </button>
+          )}
         </div>
       </header>
 
@@ -192,6 +230,7 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
 
         <div className="mt-auto space-y-3 pt-8">
           <button
+            ref={searchButtonRef}
             type="button"
             onClick={() => sheetRef.current?.showModal()}
             className={`flex h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-white/10 text-[17px] font-semibold ring-1 ring-white/15 hover:bg-white/15 active:bg-white/20 ${FOCUS_DARK}`}
@@ -207,7 +246,7 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
         {d ? [d.status, d.name, d.sub].filter(Boolean).join(". ") : ""}
       </p>
       {d && <ResultOverlay d={d} onClose={closeResult} />}
-      <SearchSheet sheetRef={sheetRef} eventId={eventId} onPick={manualCheckIn} />
+      <SearchSheet sheetRef={sheetRef} eventId={eventId} busy={pending} onPick={manualCheckIn} />
     </div>
   );
 }
@@ -297,7 +336,7 @@ function History({ entries }: { entries: Entry[] }) {
   );
 }
 
-function SearchSheet({ sheetRef, eventId, onPick }: { sheetRef: RefObject<HTMLDialogElement | null>; eventId: string; onPick: (ticketId: string) => void }) {
+function SearchSheet({ sheetRef, eventId, busy, onPick }: { sheetRef: RefObject<HTMLDialogElement | null>; eventId: string; busy: boolean; onPick: (ticketId: string) => void }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<TicketHit[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -332,6 +371,9 @@ function SearchSheet({ sheetRef, eventId, onPick }: { sheetRef: RefObject<HTMLDi
   }
 
   const short = q.trim().length < 2;
+  const NO_MATCH = "Không thấy ai khớp. Thử MSSV hoặc tên không dấu.";
+  // Announced politely; the list itself is not a live region.
+  const statusText = failed || short ? "" : busy ? "Đang kiểm tra lượt trước…" : !hits ? "Đang tìm…" : hits.length ? `${hits.length} kết quả` : NO_MATCH;
   return (
     <dialog
       ref={sheetRef}
@@ -373,7 +415,15 @@ function SearchSheet({ sheetRef, eventId, onPick }: { sheetRef: RefObject<HTMLDi
           className="block h-12 w-full rounded-xl border border-line bg-canvas pr-3.5 pl-11 text-base text-ink placeholder:text-ink-mute focus:border-brand-500 focus:bg-surface focus:ring-4 focus:ring-brand-100 focus:outline-none"
         />
       </div>
-      <div aria-live="polite" className="mt-2 flex-1 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <p aria-live="polite" className="sr-only">
+        {statusText}
+      </p>
+      {busy && (
+        <p className="mx-4 mt-3 flex items-center gap-2 rounded-xl bg-canvas px-3.5 py-2.5 text-sm text-ink-soft">
+          <Spinner /> Đang kiểm tra lượt trước, chờ một chút…
+        </p>
+      )}
+      <div className="mt-2 flex-1 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {failed ? (
           <div className="mt-2">
             <Alert>Không tìm được, kiểm tra mạng rồi thử lại</Alert>
@@ -385,7 +435,7 @@ function SearchSheet({ sheetRef, eventId, onPick }: { sheetRef: RefObject<HTMLDi
             <Spinner /> Đang tìm…
           </p>
         ) : hits.length === 0 ? (
-          <p className="px-1 py-6 text-center text-sm text-ink-soft">Không thấy ai khớp. Thử MSSV hoặc tên không dấu.</p>
+          <p className="px-1 py-6 text-center text-sm text-ink-soft">{NO_MATCH}</p>
         ) : (
           <ul className="divide-y divide-line">
             {hits.map((h) => {
@@ -399,8 +449,8 @@ function SearchSheet({ sheetRef, eventId, onPick }: { sheetRef: RefObject<HTMLDi
                   {h.checkedInAt ? (
                     <span className="shrink-0 text-sm text-ink-mute">Đã vào {formatTime(h.checkedInAt)}</span>
                   ) : (
-                    <button type="button" onClick={() => onPick(h.id)} className={buttonClass("primary", "md", "shrink-0")}>
-                      Điểm danh
+                    <button type="button" disabled={busy} onClick={() => onPick(h.id)} className={buttonClass("primary", "md", "shrink-0")}>
+                      {busy ? "Đang kiểm tra…" : "Điểm danh"}
                     </button>
                   )}
                 </li>

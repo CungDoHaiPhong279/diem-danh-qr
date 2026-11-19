@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { createClient, requireUser } from "@/lib/supabase/server";
+import { Alert } from "@/components/ui";
 import { Scanner } from "./scanner";
 
 export const metadata: Metadata = { title: "Máy quét" };
@@ -22,7 +23,17 @@ async function Scan({ params }: { params: Promise<{ id: string }> }) {
     .eq("event_members.user_id", user.id)
     .maybeSingle();
   if (!ev) notFound();
-  return <Scanner eventId={ev.id} eventTitle={ev.title} siteUrl={process.env.NEXT_PUBLIC_SITE_URL!} />;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  // Without it every ticket QR would be rejected as foreign: fail loudly instead.
+  if (!siteUrl || !URL.canParse(siteUrl))
+    return (
+      <div className="fixed inset-0 z-30 bg-scan-bg p-4">
+        <div className="mx-auto max-w-[480px]">
+          <Alert>Thiếu cấu hình địa chỉ trang (NEXT_PUBLIC_SITE_URL)</Alert>
+        </div>
+      </div>
+    );
+  return <Scanner eventId={ev.id} eventTitle={ev.title} siteUrl={siteUrl} />;
 }
 
 export default function ScanPage({ params }: { params: Promise<{ id: string }> }) {

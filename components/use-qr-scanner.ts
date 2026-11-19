@@ -34,6 +34,7 @@ export function useQrScanner(onCode: (raw: string, meta: ScanMeta) => boolean | 
   const streamRef = useRef<MediaStream | null>(null);
   const runRef = useRef(0); // bumped on stop so an old loop exits
   const onCodeRef = useRef(onCode);
+  const lastSeenRef = useRef(new Map<string, number>());
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +55,7 @@ export function useQrScanner(onCode: (raw: string, meta: ScanMeta) => boolean | 
   const loop = useCallback(
     async (run: number, video: HTMLVideoElement, startedAt: number) => {
       const detector = new BarcodeDetector({ formats: ["qr_code"] });
-      const lastSeen = new Map<string, number>();
+      const lastSeen = (lastSeenRef.current = new Map<string, number>());
       // Sequential awaits: detect calls never overlap.
       while (run === runRef.current) {
         if (video.readyState >= 2) {
@@ -125,5 +126,10 @@ export function useQrScanner(onCode: (raw: string, meta: ScanMeta) => boolean | 
     }
   }, [loop, stop]);
 
-  return { videoRef, running, error, start, stop };
+  /** Let `raw` fire again on the next frame (e.g. retry after a failed result). */
+  const forget = useCallback((raw: string) => {
+    lastSeenRef.current.delete(raw);
+  }, []);
+
+  return { videoRef, running, error, start, stop, forget };
 }
