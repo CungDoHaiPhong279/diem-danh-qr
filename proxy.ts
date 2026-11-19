@@ -14,7 +14,8 @@ export async function proxy(request: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getUser();
-  if (!data.user) {
+  // Server Actions check auth themselves; a redirect here would look like a network error to the scanner.
+  if (!data.user && !request.headers.has("next-action")) {
     const login = new URL("/login", request.url);
     login.searchParams.set("next", request.nextUrl.pathname);
     const redirect = NextResponse.redirect(login);
