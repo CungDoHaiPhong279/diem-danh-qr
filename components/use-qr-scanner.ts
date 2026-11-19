@@ -126,10 +126,5 @@ export function useQrScanner(onCode: (raw: string, meta: ScanMeta) => boolean | 
     }
   }, [loop, stop]);
 
-  /** Let `raw` fire again on the next frame (e.g. retry after a failed result). */
-  const forget = useCallback((raw: string) => {
-    lastSeenRef.current.delete(raw);
-  }, []);
-
-  return { videoRef, running, error, start, stop, forget };
+  return { videoRef, running, error, start, stop };
 }

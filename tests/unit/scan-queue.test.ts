@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { enqueue, flushQueue, loadQueue, remove, saveQueue, type QueuedScan } from "@/lib/scan-queue";
+import { enqueue, flushQueue, keepOnReplay, loadQueue, remove, saveQueue, upsertEntry, type QueuedScan } from "@/lib/scan-queue";
 
 const scan = (n: number): QueuedScan => ({ scanId: `s${n}`, eventId: "e", ticketId: `t${n}`, scannedAt: `2026-11-19T00:00:0${n}.000Z` });
 
@@ -49,5 +49,29 @@ describe("scan queue", () => {
       },
     });
     expect(() => saveQueue("e", [scan(1)])).not.toThrow();
+  });
+
+  test("keepOnReplay: only forbidden keeps the item (re-login replays it); other outcomes remove it", () => {
+    expect(keepOnReplay({ kind: "forbidden" })).toBe(true);
+    expect(keepOnReplay({ kind: "ok", name: "A", studentId: null, checkedInAt: "" })).toBe(false);
+    expect(keepOnReplay({ kind: "already", name: "A", studentId: null, checkedInAt: "", by: "B" })).toBe(false);
+    expect(keepOnReplay({ kind: "invalid", reason: "cancelled" })).toBe(false);
+  });
+
+  test("upsertEntry updates in place, keeping position and time", () => {
+    const h = [
+      { id: "b", at: "2026-11-19T10:00:00.000Z", v: 1 },
+      { id: "a", at: "2026-11-19T09:00:00.000Z", v: 1 },
+    ];
+    expect(upsertEntry(h, { id: "a", at: "2026-11-19T11:00:00.000Z", v: 2 }, 10)).toEqual([h[0], { id: "a", at: "2026-11-19T09:00:00.000Z", v: 2 }]);
+  });
+
+  test("upsertEntry inserts a new entry by time, newest first, capped", () => {
+    const h = [
+      { id: "c", at: "2026-11-19T12:00:00.000Z" },
+      { id: "a", at: "2026-11-19T09:00:00.000Z" },
+    ];
+    expect(upsertEntry(h, { id: "b", at: "2026-11-19T10:00:00.000Z" }, 10).map((e) => e.id)).toEqual(["c", "b", "a"]);
+    expect(upsertEntry(h, { id: "z", at: "2026-11-18T00:00:00.000Z" }, 2).map((e) => e.id)).toEqual(["c", "a"]);
   });
 });

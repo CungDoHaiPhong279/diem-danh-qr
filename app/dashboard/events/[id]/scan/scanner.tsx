@@ -5,7 +5,8 @@ import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type
 import { parseTicketToken, type CheckinOutcome } from "@/lib/checkin";
 import { IN_APP_BROWSER } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
-import { enqueue, flushQueue, loadQueue, remove, saveQueue, type QueuedScan } from "@/lib/scan-queue";
+import { useRouter } from "next/navigation";
+import { enqueue, flushQueue, keepOnReplay, loadQueue, remove, saveQueue, upsertEntry, type QueuedScan } from "@/lib/scan-queue";
 import { useQrScanner } from "@/components/use-qr-scanner";
 import { Alert, Spinner, buttonClass } from "@/components/ui";
 import { ArrowLeftIcon, CheckIcon, ChevronDownIcon, ClockIcon, ScanIcon, SearchIcon, XIcon } from "@/components/icons";
@@ -73,6 +74,10 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   const [history, setHistory] = useState<Entry[]>([]);
   const busyRef = useRef(false); // a check-in is in flight or a result is on screen
   const [queued, setQueued] = useState(0);
+  const [unsaved, setUnsaved] = useState(0); // queued scans held only in memory (storage refused them)
+  const [expired, setExpired] = useState(false); // a replay came back "forbidden": wait for a re-login
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const router = useRouter();
   const flushingRef = useRef(false);
   const localOnlyRef = useRef<QueuedScan[]>([]); // scans localStorage refused to hold (blocked/quota): kept in memory only
   const sheetRef = useRef<HTMLDialogElement>(null);
@@ -102,14 +107,16 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   const hasQueued = queued > 0;
   useEffect(() => {
     if (!hasQueued) return;
-    const t = setInterval(onFlush, FLUSH_EVERY_MS);
     const warn = (e: BeforeUnloadEvent) => e.preventDefault(); // browser shows its own "leave page?" prompt
     window.addEventListener("beforeunload", warn);
-    return () => {
-      clearInterval(t);
-      window.removeEventListener("beforeunload", warn);
-    };
+    return () => window.removeEventListener("beforeunload", warn);
   }, [hasQueued]);
+  // Expired session: polling can't succeed; mount, `online` and a live success still retry.
+  useEffect(() => {
+    if (!hasQueued || expired) return;
+    const t = setInterval(onFlush, FLUSH_EVERY_MS);
+    return () => clearInterval(t);
+  }, [hasQueued, expired]);
 
   const onResultTimeout = useEffectEvent(() => closeResult());
   useEffect(() => {
@@ -193,6 +200,7 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
     const stored = loadQueue(eventId);
     localOnlyRef.current = q.filter((s) => !stored.some((x) => x.scanId === s.scanId));
     setQueued(q.length);
+    setUnsaved(localOnlyRef.current.length);
   }
 
   async function flush() {
@@ -201,15 +209,17 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
     try {
       const q = readQueue();
       setQueued(q.length);
+      // The server clamps scanned_at to at most 1 day ago; fine for an event-day tool.
       await flushQueue(q, async (s) => {
         const outcome = await withTimeout(checkIn({ ...s, eventId }), CHECKIN_TIMEOUT_MS);
+        if (keepOnReplay(outcome)) {
+          setExpired(true);
+          throw new Error("forbidden"); // stops the flush; the item stays queued
+        }
+        setExpired(false);
         writeQueue(remove(readQueue(), s.scanId));
         // History only, no overlay: the checker may already be scanning someone else.
-        setHistory((h) =>
-          h.some((e) => e.id === s.scanId)
-            ? h.map((e) => (e.id === s.scanId ? { ...e, shown: outcome } : e))
-            : [{ id: s.scanId, at: s.scannedAt, shown: outcome }, ...h].slice(0, HISTORY_SIZE),
-        );
+        setHistory((h) => upsertEntry(h, { id: s.scanId, at: s.scannedAt, shown: outcome }, HISTORY_SIZE));
       });
     } finally {
       flushingRef.current = false;
@@ -225,12 +235,24 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   }
 
   const d = shown && describe(shown);
+  const backHref = `/dashboard/events/${eventId}`;
+  const loginHref = `/login?next=${encodeURIComponent(`/dashboard/events/${eventId}/scan`)}`;
 
   return (
     <div className="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-scan-bg text-white [color-scheme:dark]">
       <header className="sticky top-0 z-10 bg-scan-panel">
         <div className="mx-auto flex h-[52px] w-full max-w-[480px] items-center gap-1 px-2">
-          <Link href={`/dashboard/events/${eventId}`} aria-label="Quay lại trang sự kiện" className={`grid size-11 shrink-0 place-items-center rounded-xl hover:bg-white/10 ${FOCUS_DARK}`}>
+          <Link
+            href={backHref}
+            aria-label="Quay lại trang sự kiện"
+            // Client navigation skips beforeunload, so ask here while scans are queued.
+            onClick={(e) => {
+              if (queued === 0) return;
+              e.preventDefault();
+              setConfirmLeave(true);
+            }}
+            className={`grid size-11 shrink-0 place-items-center rounded-xl hover:bg-white/10 ${FOCUS_DARK}`}
+          >
             <ArrowLeftIcon width={22} height={22} />
           </Link>
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{eventTitle}</h1>
@@ -241,6 +263,32 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
             </button>
           )}
         </div>
+        {confirmLeave && queued > 0 && (
+          <div role="alert" className="mx-auto w-full max-w-[480px] px-4 pb-3">
+            <p className="text-[15px] font-semibold">Còn {queued} lượt chưa gửi. Rời trang?</p>
+            <p className="mt-0.5 text-sm text-white/75">
+              {unsaved > 0 ? `${unsaved} lượt không lưu được trên máy này sẽ mất.` : "Các lượt này sẽ được gửi khi bạn mở lại trang quét."}
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button type="button" autoFocus onClick={() => setConfirmLeave(false)} className={`h-11 flex-1 rounded-xl bg-white px-3 text-[15px] font-semibold text-ink ${FOCUS_DARK}`}>
+                Ở lại
+              </button>
+              <button type="button" onClick={() => router.push(backHref)} className={`h-11 flex-1 rounded-xl bg-white/10 px-3 text-[15px] font-semibold ring-1 ring-white/15 hover:bg-white/15 ${FOCUS_DARK}`}>
+                Rời trang
+              </button>
+            </div>
+          </div>
+        )}
+        {expired && queued > 0 && (
+          <div className="bg-scan-wait">
+            <p className="mx-auto w-full max-w-[480px] px-4 py-2.5 text-[15px] font-medium">
+              Phiên đăng nhập đã hết. Đăng nhập lại để gửi {queued} lượt đang chờ.{" "}
+              <Link href={loginHref} className={`font-semibold underline underline-offset-2 ${FOCUS_DARK}`}>
+                Đăng nhập lại
+              </Link>
+            </p>
+          </div>
+        )}
       </header>
 
       <main className="mx-auto flex w-full max-w-[480px] flex-1 flex-col px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">

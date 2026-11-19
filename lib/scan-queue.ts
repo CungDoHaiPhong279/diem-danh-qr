@@ -1,3 +1,5 @@
+import type { CheckinOutcome } from "@/lib/checkin";
+
 // Scans whose check-in request failed, kept in localStorage and re-sent later.
 // Safe to replay: the server's checkin is idempotent per scanId.
 export type QueuedScan = { scanId: string; eventId: string; token?: string; ticketId?: string; scannedAt: string };
@@ -40,4 +42,16 @@ export async function flushQueue(list: QueuedScan[], send: (s: QueuedScan) => Pr
     sent.push(s.scanId);
   }
   return { sent, failed: [] };
+}
+
+/** A replay answered "forbidden" (session expired while offline) stays queued so a re-login can send it. */
+export function keepOnReplay(outcome: CheckinOutcome): boolean {
+  return outcome.kind === "forbidden";
+}
+
+/** Updates the entry with item.id in place (keeping its time), or inserts it by time, newest first; keeps `max`. */
+export function upsertEntry<T extends { id: string; at: string }>(list: T[], item: T, max: number): T[] {
+  if (list.some((e) => e.id === item.id)) return list.map((e) => (e.id === item.id ? { ...item, at: e.at } : e));
+  // ISO-8601 UTC strings sort by time as plain strings.
+  return [...list, item].sort((a, b) => b.at.localeCompare(a.at)).slice(0, max);
 }
