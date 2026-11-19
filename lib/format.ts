@@ -10,3 +10,8 @@ export function formatDate(iso: string) {
 export function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("vi-VN", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
 }
+
+/** Accent- and case-insensitive key for client-side filtering: "Nguyễn Đức" → "nguyen duc". */
+export function foldText(s: string) {
+  return s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/đ/g, "d");
+}

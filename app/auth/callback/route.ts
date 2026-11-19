@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { safeNext } from "@/lib/safe-next";
 
 export async function GET(request: Request) {
   const { origin, searchParams } = new URL(request.url);
@@ -7,7 +8,7 @@ export async function GET(request: Request) {
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) return NextResponse.redirect(`${origin}/dashboard`);
+    if (!error) return NextResponse.redirect(`${origin}${safeNext(searchParams.get("next"))}`);
     console.error("auth callback: exchange failed", error.code ?? error.name);
   } else if (searchParams.get("error")) {
     console.error("auth callback: provider error", searchParams.get("error"), searchParams.get("error_description"));
