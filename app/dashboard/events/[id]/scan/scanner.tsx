@@ -80,8 +80,8 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
     if (busyRef.current || sheetRef.current?.open) return false; // not taken: fires again when ready
     const token = parseTicketToken(raw, siteUrl);
     if (!token) {
+      // No retry: a foreign code held in view would flash red every 2 s; last-seen dedupe silences it.
       busyRef.current = true;
-      retryRawRef.current = raw;
       show({ kind: "unreadable" });
       return;
     }
