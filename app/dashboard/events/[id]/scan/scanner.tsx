@@ -1,0 +1,414 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { parseTicketToken, type CheckinOutcome } from "@/lib/checkin";
+import { IN_APP_BROWSER } from "@/lib/constants";
+import { formatTime } from "@/lib/format";
+import { useQrScanner } from "@/components/use-qr-scanner";
+import { Alert, Spinner, buttonClass } from "@/components/ui";
+import { ArrowLeftIcon, CheckIcon, ChevronDownIcon, ClockIcon, ScanIcon, SearchIcon, XIcon } from "@/components/icons";
+import { checkIn, searchTickets, type TicketHit } from "./actions";
+
+type Shown = CheckinOutcome | { kind: "unreadable" } | { kind: "network" };
+type CheckinInput = Parameters<typeof checkIn>[0];
+type Tone = "ok" | "bad" | "wait";
+type Entry = { id: string; at: string; shown: Shown };
+
+const RESULT_MS = 2000;
+const HISTORY_SIZE = 10;
+const FOCUS_DARK = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white";
+const TONE_BG: Record<Tone, string> = { ok: "bg-scan-ok", bad: "bg-scan-bad", wait: "bg-scan-wait" };
+const TONE_DOT: Record<Tone, string> = { ok: "bg-brand-500", bad: "bg-red-500", wait: "bg-amber-500" };
+const TONE_ICON: Record<Tone, typeof CheckIcon> = { ok: CheckIcon, bad: XIcon, wait: ClockIcon };
+const INVALID_TEXT = { not_found: "Vé không hợp lệ", bad_qr: "Vé không hợp lệ", wrong_event: "Vé của sự kiện khác", cancelled: "Vé đã bị hủy" } as const;
+
+/** label = short text for the history list. */
+function describe(s: Shown): { tone: Tone; status: string; label: string; name?: string; detail?: string; sub?: string } {
+  switch (s.kind) {
+    case "ok":
+      return { tone: "ok", status: "Mời vào", label: "Mời vào", name: s.name, detail: s.studentId ? `MSSV ${s.studentId}` : undefined };
+    case "already":
+      return {
+        tone: "bad",
+        status: "Đã điểm danh",
+        label: "Đã điểm danh",
+        name: s.name,
+        detail: s.studentId ? `MSSV ${s.studentId}` : undefined,
+        sub: `${s.checkedInAt ? `lúc ${formatTime(s.checkedInAt)}, ` : ""}bởi ${s.by}`,
+      };
+    case "invalid":
+      return { tone: "bad", status: INVALID_TEXT[s.reason], label: INVALID_TEXT[s.reason] };
+    case "forbidden":
+      return { tone: "bad", status: "Bạn không còn quyền soát vé sự kiện này", label: "Không có quyền", sub: "Hãy đăng nhập lại hoặc xin ban tổ chức link mời mới" };
+    case "unreadable":
+      return { tone: "bad", status: "Mã không hợp lệ", label: "Mã không hợp lệ", sub: "Đây không phải mã vé của trang này" };
+    case "network":
+      return { tone: "wait", status: "Mất kết nối, thử lại", label: "Mất kết nối" };
+  }
+}
+
+const noSubscribe = () => () => {};
+
+export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eventTitle: string; siteUrl: string }) {
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [pending, setPending] = useState(false);
+  const [history, setHistory] = useState<Entry[]>([]);
+  const busyRef = useRef(false); // a check-in is in flight or a result is on screen
+  const sheetRef = useRef<HTMLDialogElement>(null);
+  const inAppBrowser = useSyncExternalStore(noSubscribe, () => IN_APP_BROWSER.test(navigator.userAgent), () => false);
+
+  const { videoRef, running, error, start } = useQrScanner((raw) => {
+    if (busyRef.current || sheetRef.current?.open) return false; // not taken: fires again when ready
+    busyRef.current = true;
+    const token = parseTicketToken(raw, siteUrl);
+    if (!token) show({ kind: "unreadable" });
+    else void runCheckIn({ eventId, scanId: crypto.randomUUID(), token, scannedAt: new Date().toISOString() });
+  });
+
+  useEffect(() => {
+    if (!shown) return;
+    const t = setTimeout(() => {
+      setShown(null);
+      busyRef.current = false;
+    }, RESULT_MS);
+    return () => clearTimeout(t);
+  }, [shown]);
+
+  // Keep the screen on while the camera runs; the browser drops the lock when the tab hides.
+  useEffect(() => {
+    if (!running) return;
+    let lock: WakeLockSentinel | null = null;
+    let done = false;
+    const acquire = async () => {
+      try {
+        const l = await navigator.wakeLock?.request("screen");
+        if (done) void l?.release();
+        else lock = l ?? null;
+      } catch {}
+    };
+    const onVisible = () => document.visibilityState === "visible" && void acquire();
+    void acquire();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      done = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      lock?.release().catch(() => {});
+    };
+  }, [running]);
+
+  function show(s: Shown) {
+    setPending(false);
+    setShown(s);
+    setHistory((h) => [{ id: crypto.randomUUID(), at: new Date().toISOString(), shown: s }, ...h].slice(0, HISTORY_SIZE));
+    const tone = describe(s).tone;
+    try {
+      if (tone !== "wait") navigator.vibrate?.(tone === "ok" ? 60 : [80, 60, 80]);
+    } catch {}
+  }
+
+  function closeResult() {
+    setShown(null);
+    busyRef.current = false;
+  }
+
+  async function runCheckIn(input: CheckinInput) {
+    setPending(true);
+    let outcome: CheckinOutcome;
+    try {
+      outcome = await checkIn(input);
+    } catch {
+      handleCheckinError();
+      return;
+    }
+    show(outcome);
+  }
+
+  // checkIn threw (network/infra). Task 6 replaces this with the offline queue.
+  function handleCheckinError() {
+    show({ kind: "network" });
+  }
+
+  function manualCheckIn(ticketId: string) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    sheetRef.current?.close();
+    void runCheckIn({ eventId, scanId: crypto.randomUUID(), ticketId });
+  }
+
+  const d = shown && describe(shown);
+
+  return (
+    <div className="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-scan-bg text-white [color-scheme:dark]">
+      <header className="sticky top-0 z-10 bg-scan-panel">
+        <div className="mx-auto flex h-[52px] w-full max-w-[480px] items-center gap-1 px-2">
+          <Link href={`/dashboard/events/${eventId}`} aria-label="Quay lại trang sự kiện" className={`grid size-11 shrink-0 place-items-center rounded-xl hover:bg-white/10 ${FOCUS_DARK}`}>
+            <ArrowLeftIcon width={22} height={22} />
+          </Link>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{eventTitle}</h1>
+          <PendingBadge count={0} />
+        </div>
+      </header>
+
+      <main className="mx-auto flex w-full max-w-[480px] flex-1 flex-col px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        {inAppBrowser && !running && (
+          <div className="mb-3">
+            <Alert tone="warning">Bạn đang mở trong Zalo/Messenger nên camera có thể bị chặn. Hãy mở link này bằng Safari hoặc Chrome.</Alert>
+          </div>
+        )}
+
+        {/* dvh cap keeps the search button on screen on short, wide screens */}
+        <div className="relative mx-auto aspect-square w-full max-w-[min(100%,52dvh)] overflow-hidden rounded-3xl bg-black/50 ring-1 ring-white/10">
+          <video ref={videoRef} playsInline muted autoPlay className={`h-full w-full object-cover ${running ? "" : "invisible"}`} />
+          <Corners />
+          {!running && (
+            <div className="absolute inset-0 grid place-items-center p-6">
+              <button
+                type="button"
+                onClick={start}
+                className={`inline-flex h-14 items-center gap-2.5 rounded-2xl bg-white px-7 text-[17px] font-semibold text-ink shadow-lg shadow-black/30 hover:bg-stone-100 active:bg-stone-200 ${FOCUS_DARK}`}
+              >
+                <ScanIcon width={22} height={22} />
+                Bắt đầu quét
+              </button>
+            </div>
+          )}
+          {pending && (
+            <div className="absolute inset-0 grid place-items-center bg-black/55">
+              <span className="inline-flex items-center gap-2.5 rounded-full bg-scan-panel px-4 py-2.5 text-[15px] font-medium">
+                <Spinner /> Đang kiểm tra…
+              </span>
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div className="mt-3">
+            <Alert>{error}</Alert>
+          </div>
+        )}
+        <p className="mt-3 text-center text-[15px] text-white/75">{running ? "Đưa mã QR vào khung" : "Bấm “Bắt đầu quét” rồi cho phép dùng camera"}</p>
+        {!running && <p className="mt-1 text-center text-[13px] text-white/60">Mở bằng Safari/Chrome, không mở trong Zalo</p>}
+
+        <div className="mt-auto space-y-3 pt-8">
+          <button
+            type="button"
+            onClick={() => sheetRef.current?.showModal()}
+            className={`flex h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-white/10 text-[17px] font-semibold ring-1 ring-white/15 hover:bg-white/15 active:bg-white/20 ${FOCUS_DARK}`}
+          >
+            <SearchIcon width={22} height={22} />
+            Tìm theo tên / MSSV
+          </button>
+          <History entries={history} />
+        </div>
+      </main>
+
+      <p role="status" aria-live="assertive" className="sr-only">
+        {d ? [d.status, d.name, d.sub].filter(Boolean).join(". ") : ""}
+      </p>
+      {d && <ResultOverlay d={d} onClose={closeResult} />}
+      <SearchSheet sheetRef={sheetRef} eventId={eventId} onPick={manualCheckIn} />
+    </div>
+  );
+}
+
+/** Offline-queue badge (Task 6). Renders nothing while the queue is empty. */
+function PendingBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-scan-wait px-2.5 py-1 text-sm font-semibold">
+      <ClockIcon width={16} height={16} /> Đang chờ ({count})
+    </span>
+  );
+}
+
+function Corners() {
+  const c = "absolute size-11 border-white";
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-[13%]">
+      <span className={`${c} top-0 left-0 rounded-tl-2xl border-t-4 border-l-4`} />
+      <span className={`${c} top-0 right-0 rounded-tr-2xl border-t-4 border-r-4`} />
+      <span className={`${c} bottom-0 left-0 rounded-bl-2xl border-b-4 border-l-4`} />
+      <span className={`${c} right-0 bottom-0 rounded-br-2xl border-r-4 border-b-4`} />
+    </div>
+  );
+}
+
+function ResultOverlay({ d, onClose }: { d: ReturnType<typeof describe>; onClose: () => void }) {
+  const Icon = TONE_ICON[d.tone];
+  return (
+    // Whole screen is the close target; the live region above carries the text for screen readers.
+    <button
+      type="button"
+      autoFocus
+      onClick={onClose}
+      aria-label="Đóng kết quả, quét tiếp"
+      className={`fixed inset-0 z-50 flex w-full cursor-default flex-col justify-center text-left text-white outline-none motion-safe:animate-fade-in ${TONE_BG[d.tone]}`}
+    >
+      <div aria-hidden className="mx-auto w-full max-w-[480px] px-6">
+        <span className="grid size-16 place-items-center rounded-full bg-white/15">
+          <Icon width={48} height={48} strokeWidth={2.4} />
+        </span>
+        {d.name ? (
+          <>
+            <p className="mt-5 text-xl font-semibold">{d.status}</p>
+            <p className="mt-2 line-clamp-3 text-[40px] leading-[1.1] font-bold text-balance break-words">{d.name}</p>
+            {d.detail && <p className="mt-3 text-[17px] font-medium text-white/90">{d.detail}</p>}
+          </>
+        ) : (
+          <p className="mt-5 text-[32px] leading-tight font-bold text-balance">{d.status}</p>
+        )}
+        {d.sub && <p className="mt-2 text-[17px] font-medium text-white/90">{d.sub}</p>}
+      </div>
+      <p aria-hidden className="absolute inset-x-0 bottom-[max(1.5rem,env(safe-area-inset-bottom))] text-center text-[15px] text-white/90">
+        Chạm để quét tiếp
+      </p>
+    </button>
+  );
+}
+
+function History({ entries }: { entries: Entry[] }) {
+  return (
+    <details className="group rounded-2xl bg-scan-panel">
+      <summary className={`flex h-12 cursor-pointer list-none items-center justify-between rounded-2xl px-4 text-[15px] font-medium [&::-webkit-details-marker]:hidden ${FOCUS_DARK}`}>
+        Lần quét gần đây ({entries.length})
+        <ChevronDownIcon className="text-white/70 transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+      </summary>
+      {entries.length === 0 ? (
+        <p className="px-4 pb-4 text-sm text-white/65">Chưa có lượt quét nào.</p>
+      ) : (
+        <ol className="divide-y divide-white/10 px-4 pb-1">
+          {entries.map((e) => {
+            const d = describe(e.shown);
+            return (
+              <li key={e.id} className="flex items-center gap-3 py-3 text-[15px]">
+                <span aria-hidden className={`size-2.5 shrink-0 rounded-full ${TONE_DOT[d.tone]}`} />
+                <span className="shrink-0 font-medium">{d.label}</span>
+                <span className="min-w-0 flex-1 truncate text-white/70">{d.name}</span>
+                <time dateTime={e.at} className="shrink-0 text-white/65 tabular-nums">
+                  {formatTime(e.at)}
+                </time>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </details>
+  );
+}
+
+function SearchSheet({ sheetRef, eventId, onPick }: { sheetRef: RefObject<HTMLDialogElement | null>; eventId: string; onPick: (ticketId: string) => void }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<TicketHit[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const seq = useRef(0); // only the latest query may set results
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function onChange(v: string) {
+    setQ(v);
+    clearTimeout(timer.current);
+    const n = ++seq.current;
+    if (v.trim().length < 2) {
+      setHits(null);
+      setLoading(false);
+      setFailed(false);
+      return;
+    }
+    timer.current = setTimeout(async () => {
+      setLoading(true);
+      setFailed(false);
+      try {
+        const r = await searchTickets(eventId, v);
+        if (n === seq.current) setHits(r);
+      } catch {
+        if (n === seq.current) setFailed(true);
+      } finally {
+        if (n === seq.current) setLoading(false);
+      }
+    }, 300);
+  }
+
+  const short = q.trim().length < 2;
+  return (
+    <dialog
+      ref={sheetRef}
+      aria-labelledby="search-title"
+      onClose={() => onChange("")}
+      onClick={(e) => e.target === e.currentTarget && e.currentTarget.close()}
+      className="inset-x-0 top-auto bottom-0 mx-auto h-[85dvh] max-h-none w-full max-w-[480px] rounded-t-3xl bg-surface p-0 text-ink backdrop:bg-black/60 open:flex open:flex-col motion-safe:open:animate-fade-in"
+    >
+      <div className="flex items-center gap-2 py-3 pr-2 pl-5">
+        <h2 id="search-title" className="flex-1 text-lg font-semibold">
+          Tìm theo tên / MSSV
+        </h2>
+        {loading && hits && (
+          <span className="text-ink-mute">
+            <Spinner />
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => sheetRef.current?.close()}
+          aria-label="Đóng"
+          className="grid size-11 place-items-center rounded-xl text-ink-soft hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-brand-600"
+        >
+          <XIcon width={22} height={22} />
+        </button>
+      </div>
+      <div className="relative px-4">
+        <SearchIcon className="pointer-events-none absolute top-1/2 left-7.5 -translate-y-1/2 text-ink-mute" />
+        <input
+          autoFocus
+          type="search"
+          value={q}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label="Họ tên hoặc MSSV"
+          placeholder="Nhập họ tên hoặc MSSV"
+          autoComplete="off"
+          enterKeyHint="search"
+          // 16px: smaller makes iOS zoom in on focus
+          className="block h-12 w-full rounded-xl border border-line bg-canvas pr-3.5 pl-11 text-base text-ink placeholder:text-ink-mute focus:border-brand-500 focus:bg-surface focus:ring-4 focus:ring-brand-100 focus:outline-none"
+        />
+      </div>
+      <div aria-live="polite" className="mt-2 flex-1 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        {failed ? (
+          <div className="mt-2">
+            <Alert>Không tìm được, kiểm tra mạng rồi thử lại</Alert>
+          </div>
+        ) : short ? (
+          <p className="px-1 py-6 text-center text-sm text-ink-mute">Gõ ít nhất 2 ký tự của họ tên hoặc MSSV.</p>
+        ) : !hits ? (
+          <p className="flex items-center justify-center gap-2 py-6 text-sm text-ink-mute">
+            <Spinner /> Đang tìm…
+          </p>
+        ) : hits.length === 0 ? (
+          <p className="px-1 py-6 text-center text-sm text-ink-soft">Không thấy ai khớp. Thử MSSV hoặc tên không dấu.</p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {hits.map((h) => {
+              const meta = [h.studentId && `MSSV ${h.studentId}`, h.className && `lớp ${h.className}`].filter(Boolean).join(", ");
+              return (
+                <li key={h.id} className="flex items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-base font-semibold break-words">{h.name}</p>
+                    {meta && <p className="mt-0.5 text-sm text-ink-soft">{meta}</p>}
+                  </div>
+                  {h.checkedInAt ? (
+                    <span className="shrink-0 text-sm text-ink-mute">Đã vào {formatTime(h.checkedInAt)}</span>
+                  ) : (
+                    <button type="button" onClick={() => onPick(h.id)} className={buttonClass("primary", "md", "shrink-0")}>
+                      Điểm danh
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </dialog>
+  );
+}
