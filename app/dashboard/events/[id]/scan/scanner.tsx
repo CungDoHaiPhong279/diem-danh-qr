@@ -5,18 +5,19 @@ import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type
 import { parseTicketToken, type CheckinOutcome } from "@/lib/checkin";
 import { IN_APP_BROWSER } from "@/lib/constants";
 import { formatTime } from "@/lib/format";
+import { enqueue, flushQueue, loadQueue, remove, saveQueue, type QueuedScan } from "@/lib/scan-queue";
 import { useQrScanner } from "@/components/use-qr-scanner";
 import { Alert, Spinner, buttonClass } from "@/components/ui";
 import { ArrowLeftIcon, CheckIcon, ChevronDownIcon, ClockIcon, ScanIcon, SearchIcon, XIcon } from "@/components/icons";
 import { checkIn, searchTickets, type TicketHit } from "./actions";
 
-type Shown = CheckinOutcome | { kind: "unreadable" } | { kind: "network" };
-type CheckinInput = Parameters<typeof checkIn>[0];
+type Shown = CheckinOutcome | { kind: "unreadable" } | { kind: "network"; name?: string };
 type Tone = "ok" | "bad" | "wait";
 type Entry = { id: string; at: string; shown: Shown };
 
 const RESULT_MS = 2000;
 const CHECKIN_TIMEOUT_MS = 8000;
+const FLUSH_EVERY_MS = 10_000;
 const HISTORY_SIZE = 10;
 const FOCUS_DARK = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white";
 const TONE_BG: Record<Tone, string> = { ok: "bg-scan-ok", bad: "bg-scan-bad", wait: "bg-scan-wait" };
@@ -45,7 +46,7 @@ function describe(s: Shown): { tone: Tone; status: string; label: string; name?:
     case "unreadable":
       return { tone: "bad", status: "Mã không hợp lệ", label: "Mã không hợp lệ", sub: "Đây không phải mã vé của trang này" };
     case "network":
-      return { tone: "wait", status: "Mất kết nối, thử lại", label: "Mất kết nối" };
+      return { tone: "wait", status: "Đã lưu, đang chờ mạng", label: "Đang chờ mạng", name: s.name };
   }
 }
 
@@ -71,12 +72,14 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   const [pending, setPending] = useState(false);
   const [history, setHistory] = useState<Entry[]>([]);
   const busyRef = useRef(false); // a check-in is in flight or a result is on screen
-  const retryRawRef = useRef<string | null>(null); // code to re-read right after a failed result closes
+  const [queued, setQueued] = useState(0);
+  const flushingRef = useRef(false);
+  const localOnlyRef = useRef<QueuedScan[]>([]); // scans localStorage refused to hold (blocked/quota): kept in memory only
   const sheetRef = useRef<HTMLDialogElement>(null);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const inAppBrowser = useSyncExternalStore(noSubscribe, () => IN_APP_BROWSER.test(navigator.userAgent), () => false);
 
-  const { videoRef, running, error, start, stop, forget } = useQrScanner((raw) => {
+  const { videoRef, running, error, start, stop } = useQrScanner((raw) => {
     if (busyRef.current || sheetRef.current?.open) return false; // not taken: fires again when ready
     const token = parseTicketToken(raw, siteUrl);
     if (!token) {
@@ -87,8 +90,26 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
     }
     const scanId = newId();
     busyRef.current = true;
-    void runCheckIn({ eventId, scanId, token, scannedAt: new Date().toISOString() }, raw);
+    void runCheckIn({ eventId, scanId, token, scannedAt: new Date().toISOString() });
   });
+
+  const onFlush = useEffectEvent(() => void flush());
+  useEffect(() => {
+    onFlush();
+    window.addEventListener("online", onFlush);
+    return () => window.removeEventListener("online", onFlush);
+  }, []);
+  const hasQueued = queued > 0;
+  useEffect(() => {
+    if (!hasQueued) return;
+    const t = setInterval(onFlush, FLUSH_EVERY_MS);
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault(); // browser shows its own "leave page?" prompt
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("beforeunload", warn);
+    };
+  }, [hasQueued]);
 
   const onResultTimeout = useEffectEvent(() => closeResult());
   useEffect(() => {
@@ -124,11 +145,11 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
     };
   }, [running]);
 
-  function show(s: Shown) {
+  function show(s: Shown, id = newId()) {
     sheetRef.current?.close(); // a result must never sit under the top-layer dialog
     setPending(false);
     setShown(s);
-    setHistory((h) => [{ id: newId(), at: new Date().toISOString(), shown: s }, ...h].slice(0, HISTORY_SIZE));
+    setHistory((h) => [{ id, at: new Date().toISOString(), shown: s }, ...h].slice(0, HISTORY_SIZE));
     const tone = describe(s).tone;
     try {
       if (tone !== "wait") navigator.vibrate?.(tone === "ok" ? 60 : [80, 60, 80]);
@@ -136,37 +157,71 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   }
 
   function closeResult() {
-    if (retryRawRef.current !== null) forget(retryRawRef.current);
-    retryRawRef.current = null;
     setShown(null);
     busyRef.current = false;
     searchButtonRef.current?.focus({ preventScroll: true });
   }
 
-  async function runCheckIn(input: CheckinInput, raw?: string) {
+  async function runCheckIn(input: QueuedScan, name?: string) {
     setPending(true);
     let outcome: CheckinOutcome;
     try {
       outcome = await withTimeout(checkIn(input), CHECKIN_TIMEOUT_MS);
     } catch {
-      handleCheckinError(raw);
+      handleCheckinError(input, name);
       return;
     }
     show(outcome);
+    void flush(); // the network is evidently back
   }
 
-  // checkIn threw or timed out (network/infra). Task 6 replaces this with the offline queue.
-  function handleCheckinError(raw?: string) {
-    retryRawRef.current = raw ?? null;
-    show({ kind: "network" });
+  // checkIn threw or timed out (network/infra): keep the scan to re-send with the same scanId.
+  // No re-read of the code: a new scanId for the same person would only duplicate the queued one.
+  function handleCheckinError(input: QueuedScan, name?: string) {
+    writeQueue(enqueue(readQueue(), input));
+    show({ kind: "network", name }, input.scanId);
   }
 
-  function manualCheckIn(ticketId: string) {
+  // shortcut: tabs don't coordinate; re-reading storage before each flush/change keeps another tab's
+  // sends from being re-sent forever (replays are idempotent anyway). Upgrade to Web Locks if multi-tab scanning matters.
+  function readQueue(): QueuedScan[] {
+    return localOnlyRef.current.reduce(enqueue, loadQueue(eventId));
+  }
+
+  function writeQueue(q: QueuedScan[]) {
+    saveQueue(eventId, q);
+    const stored = loadQueue(eventId);
+    localOnlyRef.current = q.filter((s) => !stored.some((x) => x.scanId === s.scanId));
+    setQueued(q.length);
+  }
+
+  async function flush() {
+    if (flushingRef.current) return;
+    flushingRef.current = true;
+    try {
+      const q = readQueue();
+      setQueued(q.length);
+      await flushQueue(q, async (s) => {
+        const outcome = await withTimeout(checkIn({ ...s, eventId }), CHECKIN_TIMEOUT_MS);
+        writeQueue(remove(readQueue(), s.scanId));
+        // History only, no overlay: the checker may already be scanning someone else.
+        setHistory((h) =>
+          h.some((e) => e.id === s.scanId)
+            ? h.map((e) => (e.id === s.scanId ? { ...e, shown: outcome } : e))
+            : [{ id: s.scanId, at: s.scannedAt, shown: outcome }, ...h].slice(0, HISTORY_SIZE),
+        );
+      });
+    } finally {
+      flushingRef.current = false;
+    }
+  }
+
+  function manualCheckIn(ticketId: string, name: string) {
     if (busyRef.current) return; // buttons are disabled while pending; this guards a double tap
     const scanId = newId();
     busyRef.current = true;
     sheetRef.current?.close();
-    void runCheckIn({ eventId, scanId, ticketId });
+    void runCheckIn({ eventId, scanId, ticketId, scannedAt: new Date().toISOString() }, name);
   }
 
   const d = shown && describe(shown);
@@ -179,7 +234,7 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
             <ArrowLeftIcon width={22} height={22} />
           </Link>
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{eventTitle}</h1>
-          <PendingBadge count={0} />
+          <PendingBadge count={queued} />
           {running && (
             <button type="button" onClick={stop} className={`h-11 shrink-0 rounded-xl px-3 text-sm font-semibold text-white/90 hover:bg-white/10 ${FOCUS_DARK}`}>
               Tắt camera
@@ -251,12 +306,15 @@ export function Scanner({ eventId, eventTitle, siteUrl }: { eventId: string; eve
   );
 }
 
-/** Offline-queue badge (Task 6). Renders nothing while the queue is empty. */
+/** Offline-queue badge. The live region stays mounted so count changes are announced; empty while n = 0. */
 function PendingBadge({ count }: { count: number }) {
-  if (count === 0) return null;
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-scan-wait px-2.5 py-1 text-sm font-semibold">
-      <ClockIcon width={16} height={16} /> Đang chờ ({count})
+    <span role="status" className="contents">
+      {count > 0 && (
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-scan-wait px-2.5 py-1 text-sm font-semibold">
+          <ClockIcon width={16} height={16} /> Đang chờ ({count})
+        </span>
+      )}
     </span>
   );
 }
@@ -336,7 +394,7 @@ function History({ entries }: { entries: Entry[] }) {
   );
 }
 
-function SearchSheet({ sheetRef, eventId, busy, onPick }: { sheetRef: RefObject<HTMLDialogElement | null>; eventId: string; busy: boolean; onPick: (ticketId: string) => void }) {
+function SearchSheet({ sheetRef, eventId, busy, onPick }: { sheetRef: RefObject<HTMLDialogElement | null>; eventId: string; busy: boolean; onPick: (ticketId: string, name: string) => void }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<TicketHit[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -449,7 +507,7 @@ function SearchSheet({ sheetRef, eventId, busy, onPick }: { sheetRef: RefObject<
                   {h.checkedInAt ? (
                     <span className="shrink-0 text-sm text-ink-mute">Đã vào {formatTime(h.checkedInAt)}</span>
                   ) : (
-                    <button type="button" disabled={busy} onClick={() => onPick(h.id)} className={buttonClass("primary", "md", "shrink-0")}>
+                    <button type="button" disabled={busy} onClick={() => onPick(h.id, h.name)} className={buttonClass("primary", "md", "shrink-0")}>
                       {busy ? "Đang kiểm tra…" : "Điểm danh"}
                     </button>
                   )}
