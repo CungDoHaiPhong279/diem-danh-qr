@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { loadEnv } from "vite";
 import { randomUUID } from "node:crypto";
-import { signInAs } from "./auth";
+import { assertLocalSupabase, signInAs } from "./auth";
 
 const env = { ...loadEnv("test", process.cwd(), "SUPABASE_"), ...process.env };
 const url = env.SUPABASE_URL!;
@@ -16,7 +16,7 @@ let ownerId: string;
 let eventId: string;
 
 test.beforeAll(async () => {
-  if (!/^https?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(url)) throw new Error(`e2e writes data: refusing non-local SUPABASE_URL`);
+  assertLocalSupabase(url);
   const owner = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   if (owner.error) throw owner.error;
   ownerId = owner.data.user.id;
@@ -89,5 +89,6 @@ test("check-in flow: list, manual check-in, duplicate, live count", async ({ con
 
   await page.goto(list);
   await expect(page.getByText(/^Đã vào 1 \/ 1 đã đăng ký$/)).toBeVisible();
-  await expect(page.getByRole("row", { name: new RegExp(studentName) }).getByRole("cell").nth(4)).toHaveText(/^\d\d:\d\d$/);
+  await expect(page.getByRole("row", { name: new RegExp(studentName) }).getByRole("cell").filter({ hasText: /^\d\d:\d\d$/ })).toHaveCount(1);
+  await expect(page.getByRole("row", { name: new RegExp(studentName) }).getByRole("cell", { name: email.split("@")[0], exact: true })).toBeVisible();
 });

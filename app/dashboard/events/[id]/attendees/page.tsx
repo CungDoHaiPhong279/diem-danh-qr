@@ -13,6 +13,30 @@ export const metadata: Metadata = { title: "Danh sách điểm danh" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const PAGE = 1000; // PostgREST max_rows (supabase/config.toml); a bigger range is silently cut to this
+const MAX_PAGES = 5; // events.capacity <= 5000
+
+type TicketRow = { id: string; name: string; student_id: string | null; class_name: string | null; faculty: string | null; checked_in_at: string | null; checked_in_by: string | null };
+
+/** Every valid ticket, page by page. Any failed page fails the whole list: a partial list would read as "not registered". */
+async function fetchTickets(supabase: Awaited<ReturnType<typeof createClient>>, eventId: string) {
+  const byId = new Map<string, TicketRow>(); // a registration landing between pages can shift rows: dedupe
+  for (let i = 0; i < MAX_PAGES; i++) {
+    // Never select email: checkers read this page too.
+    const { data, error } = await supabase
+      .from("tickets")
+      .select("id, name, student_id, class_name, faculty, checked_in_at, checked_in_by")
+      .eq("event_id", eventId)
+      .eq("status", "valid")
+      .order("id")
+      .range(i * PAGE, i * PAGE + PAGE - 1);
+    if (error) return { data: [], error };
+    (data as TicketRow[]).forEach((t) => byId.set(t.id, t));
+    if (data.length < PAGE) break;
+  }
+  return { data: [...byId.values()], error: null };
+}
+
 async function Attendees({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser();
@@ -23,25 +47,16 @@ async function Attendees({ params }: { params: Promise<{ id: string }> }) {
   if (!ev) notFound();
 
   const valid = () => supabase.from("tickets").select("id", { count: "exact", head: true }).eq("event_id", id).eq("status", "valid");
-  const [list, total, inside, members] = await Promise.all([
-    // Never select email: checkers read this page too.
-    // shortcut: rows capped by PostgREST max_rows (1000); counts stay exact. Paginate if events get bigger.
-    supabase
-      .from("tickets")
-      .select("id, name, student_id, class_name, faculty, checked_in_at, checked_in_by, status")
-      .eq("event_id", id)
-      .eq("status", "valid")
-      .order("checked_in_at", { ascending: false, nullsFirst: false })
-      .order("name"),
-    valid(),
-    valid().not("checked_in_at", "is", null),
-    supabase.rpc("member_names", { p_event: id }),
-  ]);
+  const [list, total, inside, members] = await Promise.all([fetchTickets(supabase, id), valid(), valid().not("checked_in_at", "is", null), supabase.rpc("member_names", { p_event: id })]);
   const failed = list.error || total.error || inside.error;
   if (failed || members.error) console.error("attendees: load failed", failed?.code, members.error?.code);
 
   const names = new Map(((members.data ?? []) as { user_id: string; name: string }[]).map((m) => [m.user_id, m.name]));
-  const rows: Attendee[] = (list.data ?? []).map((t) => ({
+  // Brief's order: checked in first, newest first; then the rest by name (Vietnamese collation, not the DB's).
+  const collator = new Intl.Collator("vi");
+  const time = (iso: string | null) => (iso ? Date.parse(iso) : 0);
+  const sorted = list.data.sort((a, b) => time(b.checked_in_at) - time(a.checked_in_at) || collator.compare(a.name, b.name));
+  const rows: Attendee[] = sorted.map((t) => ({
     id: t.id,
     name: t.name,
     studentId: t.student_id,
@@ -95,7 +110,12 @@ async function Attendees({ params }: { params: Promise<{ id: string }> }) {
               </span>
             </p>
           </Card>
-          <AttendeeList rows={rows} eventHref={eventHref} />
+          {members.error && (
+            <div className="mt-4">
+              <Alert tone="warning">Không tải được tên người quét. Tải lại trang để thử lại.</Alert>
+            </div>
+          )}
+          <AttendeeList rows={rows} inCount={x} outCount={y - x} eventHref={eventHref} />
         </>
       )}
     </>
