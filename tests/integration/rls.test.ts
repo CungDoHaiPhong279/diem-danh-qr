@@ -52,8 +52,10 @@ describe("schema and RLS", () => {
       notice_version: "v1",
     });
     expect(error).toBeNull();
-    const { data } = await anon.from("tickets").select();
-    expect(data).toEqual([]);
+    // anon has no column grants at all now: permission error, and certainly no rows
+    const { data, error: readError } = await anon.from("tickets").select("id");
+    expect(readError?.code).toBe("42501");
+    expect(data ?? []).toEqual([]);
   });
 
   it("other user cannot read or update", async () => {
@@ -69,7 +71,7 @@ describe("schema and RLS", () => {
       consent_at: new Date().toISOString(),
       notice_version: "v1",
     });
-    const t = await b.client.from("tickets").select().eq("event_id", ev.id);
+    const t = await b.client.from("tickets").select("id, name").eq("event_id", ev.id);
     expect(t.data).toEqual([]);
     const u = await b.client.from("events").update({ title: "hacked" }).eq("id", ev.id).select();
     expect(u.data ?? []).toHaveLength(0);
