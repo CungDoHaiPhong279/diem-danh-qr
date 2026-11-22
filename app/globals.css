@@ -18,6 +18,20 @@
   --color-brand-600: #0d7a5c;
   --color-brand-700: #0b624b;
   --color-brand-900: #0a3a2e;
+
+  /* Scanner screen only: dark so the camera and the result colours stand out. */
+  --color-scan-bg: #1c1917;
+  --color-scan-panel: #292524;
+  --color-scan-ok: #0d7a5c;
+  --color-scan-bad: #b42318;
+  --color-scan-wait: #b54708;
+
+  --animate-fade-in: fade-in 120ms ease-out;
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
 }
 
 html {

@@ -51,3 +51,25 @@ export async function createEvent(ownerId: string, overrides: Partial<EventRow> 
   if (error) throw error;
   return data as EventRow;
 }
+
+export async function addMember(eventId: string, userId: string, role: "organizer" | "checker"): Promise<void> {
+  const { error } = await admin.from("event_members").insert({ event_id: eventId, user_id: userId, role });
+  if (error) throw error;
+}
+
+export async function registerTicket(
+  eventId: string,
+  over: Partial<{ name: string; email: string; student_id: string }> = {},
+): Promise<{ id: string; token: string }> {
+  const { data, error } = await admin.rpc("register", {
+    p_event: eventId,
+    p_name: over.name ?? "Test Student",
+    p_email: over.email ?? `t-${randomUUID()}@test.local`,
+    p_student_id: over.student_id ?? randomUUID().slice(0, 8),
+    p_class: "C1",
+    p_faculty: "F1",
+    p_notice_version: "v1",
+  });
+  if (error) throw error;
+  return { id: data.id, token: data.token };
+}
